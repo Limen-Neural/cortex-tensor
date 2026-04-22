@@ -12,7 +12,6 @@ env:
 jobs:
   build:
 
-    runs-on: fedora-latest
     runs-on: ubuntu-latest
 
     steps:
@@ -20,5 +19,4 @@ jobs:
     - name: Build
       run: cargo build --verbose
     - name: Run tests
-      run: cargo test --verbose
       run: cargo test --verbose
