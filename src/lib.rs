@@ -1,29 +1,23 @@
-//! # spike-lmo
+//! # cortex-tensor
 //!
-//! **SNN/LLM Fusion Framework** — the core engine for SpikeLMo.
+//! Pure-Rust tensor + transformer + MoE building blocks. Zero GPU / CUDA /
+//! Julia / framework dependencies.
 //!
-//! This crate provides the mathematical and architectural building blocks for
-//! fusing Spikenaut's spiking neural networks with large language models.
-//!
-//! ## Key modules
+//! ## Modules
 //!
 //! | Module | Role |
 //! |--------|------|
-//! | [`fusion`] | `SnnLlmFusion` — the SNN ↔ LLM gating layer |
-//! | [`tensor`] | Candle-free `Tensor` type + ops |
-//! | [`training`] | `FusionTrainer` — E-prop / OTTT learning loop |
-//! | [`transformer`] | Transformer building blocks |
-//! | [`error`] | `SpikeLmoError` unified error type |
+//! | [`tensor`] | `Tensor` type + core ops |
+//! | [`transformer`] | Transformer building blocks (attention, block, model) |
+//! | [`moe`] | Mixture-of-Experts router + GGUF checkpoint bridge |
+//! | [`types`] | Shared types used by `moe` |
+//! | [`error`] | `CortexError` unified error type |
 
 pub mod tensor;
 pub mod transformer;
-pub mod fusion;
-pub mod training;
+pub mod moe;
+pub mod types;
 pub mod error;
 
-// ── Convenient top-level re-exports ──────────────────────────────────────────
-
-pub use fusion::{SnnLlmFusion, FusionConfig, GateMode};
 pub use tensor::Tensor;
-pub use training::{FusionTrainer, TrainingConfig};
-pub use error::SpikeLmoError;
+pub use error::{CortexError, HybridError, Result};

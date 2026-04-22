@@ -1,40 +1,27 @@
 [package]
-name = "spike-lmo"
+name = "cortex-tensor"
 version = "0.1.0"
 edition = "2024"
-description = "SNN/LLM Fusion Framework — candle-free neuromorphic inference and training"
+description = "Pure-Rust tensor, transformer, and MoE building blocks. Zero GPU/CUDA/Julia dependencies."
 authors = ["Raul Mc"]
 license = "GPL-3.0"
 
 [lib]
-name = "spike_lmo"
+name = "cortex_tensor"
 path = "src/lib.rs"
 
-[[bin]]
-name = "spike-lmo"
-path = "src/main.rs"
-
-[features]
-default = []
-gpu = ["myelin-accelerator"]
-
 [dependencies]
-# ── Spikenaut ecosystem (workspace deps) ────────────────────────────
-neuromod            = { workspace = true }
-spikenaut-encoder   = { workspace = true }
-spikenaut-reward    = { workspace = true }
-spikenaut-telemetry = { workspace = true }
-myelin-accelerator  = { path = "../myelin-accelerator", optional = true }
-
-# ── Core numerical / serialization ───────────────────────────────
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
 rand = "0.8"
-serde = { workspace = true }
-serde_json = { workspace = true }
 rayon = "1.7"
 memmap2 = "0.9"
 half = "2"
-thiserror = { workspace = true }
 
 [profile.release]
 opt-level = 3
 lto = "fat"
+
+[workspace]
+# Standalone: detach from any parent Cargo workspace.
