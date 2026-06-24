@@ -409,10 +409,11 @@ impl MappedGgufCheckpoint {
     }
 }
 
+#[allow(clippy::manual_is_multiple_of)]
 fn tensor_row_size(ggml_type: u32, width: usize) -> Result<usize> {
     match ggml_type {
         GGML_TYPE_Q8_0 => {
-            if !width.is_multiple_of(32) {
+            if width % 32 != 0 {
                 return Err(HybridError::UnsupportedFormat(format!(
                     "Q8_0 tensor width {width} is not divisible by 32"
                 )));
@@ -420,7 +421,7 @@ fn tensor_row_size(ggml_type: u32, width: usize) -> Result<usize> {
             Ok((width / 32) * (2 + 32))
         }
         GGML_TYPE_Q5_K => {
-            if !width.is_multiple_of(256) {
+            if width % 256 != 0 {
                 return Err(HybridError::UnsupportedFormat(format!(
                     "Q5_K tensor width {width} is not divisible by 256"
                 )));
@@ -433,8 +434,9 @@ fn tensor_row_size(ggml_type: u32, width: usize) -> Result<usize> {
     }
 }
 
+#[allow(clippy::manual_is_multiple_of)]
 fn dequantize_row_q8_0(row: &[u8], width: usize) -> Result<Vec<f32>> {
-    if !width.is_multiple_of(32) {
+    if width % 32 != 0 {
         return Err(HybridError::UnsupportedFormat(format!(
             "Q8_0 width {width} is not divisible by 32"
         )));
@@ -450,8 +452,9 @@ fn dequantize_row_q8_0(row: &[u8], width: usize) -> Result<Vec<f32>> {
     Ok(out)
 }
 
+#[allow(clippy::manual_is_multiple_of)]
 fn dequantize_row_q5_k(row: &[u8], width: usize) -> Result<Vec<f32>> {
-    if !width.is_multiple_of(256) {
+    if width % 256 != 0 {
         return Err(HybridError::UnsupportedFormat(format!(
             "Q5_K width {width} is not divisible by 256"
         )));

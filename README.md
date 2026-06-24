@@ -127,20 +127,23 @@ Enable with the `sentry` feature (uses sentry-rust 0.48):
 cortex-tensor = { git = "...", features = ["sentry"] }
 ```
 
-Init guard example (call early in main or lib init; keep guard alive for duration of process):
+Init guard example (call early in main or lib init; keep guard alive for duration of process).
+Note: the consuming crate/binary must explicitly enable the `sentry` feature on its `cortex-tensor` dependency
+(transitive features do not auto-activate). Then use the re-exported path (or add `sentry` as direct dep):
 
 ```rust
 #[cfg(feature = "sentry")]
-let _sentry_guard = sentry::init((
+let _sentry_guard = cortex_tensor::sentry::init((
     "https://<key>@sentry.io/<project>",
-    sentry::ClientOptions {
-        release: sentry::release_name!(),
+    cortex_tensor::sentry::ClientOptions {
+        release: cortex_tensor::sentry::release_name!(),
         environment: Some("production".into()),
         ..Default::default()
     },
 ));
 
-// Your app code; errors auto captured when panics or sentry::capture_message etc used.
+// Your app code; errors auto captured when panics or cortex_tensor::sentry::capture_message etc used.
+// (The re-export brings the full sentry crate API under the feature gate.)
 ```
 
 When the feature is off the re-export is not present (guarded).

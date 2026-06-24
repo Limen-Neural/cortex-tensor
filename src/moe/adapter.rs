@@ -110,10 +110,11 @@ pub(super) fn resolve_adapter(
         .as_ref()
         .and_then(|name| checkpoint.tensor_info(name, path).ok());
     let is_real_f16_attn = attn_info.as_ref().is_some_and(|info| {
-        info.ggml_type == GGML_TYPE_F16
-            && info.dims.len() == 2
-            && info.dims[0] == hidden_size
-            && info.dims[1] == hidden_size
+        // Relaxed from strict square [hidden, hidden] to support GQA models (Qwen3-MoE etc)
+        // where attn_q.weight may be e.g. [num_q_heads * head_dim, hidden_size] (or transposed).
+        // As long as it's F16 and involves the model hidden_size, treat as "real" F16 synapse-capable.
+        // The synapse_source label + README document the contract for consumers.
+        info.ggml_type == GGML_TYPE_F16 && info.dims.len() == 2 && info.dims.contains(&hidden_size)
     });
     let real_gpu_synapse_tensor = if is_real_f16_attn {
         preferred_gpu_synapse_tensor.clone()
@@ -167,13 +168,14 @@ fn infer_family(
         }
     };
 
-    if let Some(expected) = family_override
-        && expected != inferred
-    {
-        return Err(HybridError::InvalidConfig(format!(
-            "model_family override {:?} does not match GGUF architecture '{architecture}'",
-            expected
-        )));
+    #[allow(clippy::collapsible_if)]
+    if let Some(expected) = family_override {
+        if expected != inferred {
+            return Err(HybridError::InvalidConfig(format!(
+                "model_family override {:?} does not match GGUF architecture '{architecture}'",
+                expected
+            )));
+        }
     }
 
     Ok(inferred)
