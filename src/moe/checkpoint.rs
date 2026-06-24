@@ -38,6 +38,7 @@ pub(super) struct ParsedCheckpointLayout {
 pub(super) struct GgufMetadata {
     architecture: String,
     quantization: String,
+    #[allow(dead_code)]
     strings: HashMap<String, String>,
     numerics: HashMap<String, u64>,
 }
@@ -125,9 +126,7 @@ impl MappedGgufCheckpoint {
     }
 }
 
-pub(super) fn probe_and_map_checkpoint(
-    path: &str,
-) -> Result<(GgufMetadata, MappedGgufCheckpoint)> {
+pub(super) fn probe_and_map_checkpoint(path: &str) -> Result<(GgufMetadata, MappedGgufCheckpoint)> {
     let file = OpenOptions::new()
         .read(true)
         .open(path)
@@ -373,18 +372,18 @@ impl MappedGgufCheckpoint {
         }
 
         let row_size = tensor_row_size(info.ggml_type, info.dims[0])?;
-        let start = info
-            .absolute_offset
-            .checked_add(row_idx.checked_mul(row_size).ok_or_else(|| {
-                HybridError::ModelLoad {
+        let start =
+            info.absolute_offset
+                .checked_add(row_idx.checked_mul(row_size).ok_or_else(|| {
+                    HybridError::ModelLoad {
+                        path: path.to_owned(),
+                        reason: format!("tensor '{tensor_name}' row offset overflow"),
+                    }
+                })?)
+                .ok_or_else(|| HybridError::ModelLoad {
                     path: path.to_owned(),
                     reason: format!("tensor '{tensor_name}' row offset overflow"),
-                }
-            })?)
-            .ok_or_else(|| HybridError::ModelLoad {
-                path: path.to_owned(),
-                reason: format!("tensor '{tensor_name}' row offset overflow"),
-            })?;
+                })?;
         let end = start + row_size;
         if end > self.mmap.len() {
             return Err(HybridError::ModelLoad {
@@ -397,11 +396,8 @@ impl MappedGgufCheckpoint {
 
     /// Pure-CPU F16 tensor access. Returns an owned `Vec<u16>` of the
     /// tensor's raw 16-bit values (no GPU pin-registration).
-    pub(super) fn f16_tensor_values(
-        &self,
-        name: &str,
-        path: &str,
-    ) -> Result<Vec<u16>> {
+    #[allow(dead_code)]
+    pub(super) fn f16_tensor_values(&self, name: &str, path: &str) -> Result<Vec<u16>> {
         let info = self.tensor_info(name, path)?.clone();
         if info.ggml_type != GGML_TYPE_F16 {
             return Err(HybridError::UnsupportedFormat(format!(
@@ -416,7 +412,7 @@ impl MappedGgufCheckpoint {
 fn tensor_row_size(ggml_type: u32, width: usize) -> Result<usize> {
     match ggml_type {
         GGML_TYPE_Q8_0 => {
-            if width % 32 != 0 {
+            if !width.is_multiple_of(32) {
                 return Err(HybridError::UnsupportedFormat(format!(
                     "Q8_0 tensor width {width} is not divisible by 32"
                 )));
@@ -424,7 +420,7 @@ fn tensor_row_size(ggml_type: u32, width: usize) -> Result<usize> {
             Ok((width / 32) * (2 + 32))
         }
         GGML_TYPE_Q5_K => {
-            if width % 256 != 0 {
+            if !width.is_multiple_of(256) {
                 return Err(HybridError::UnsupportedFormat(format!(
                     "Q5_K tensor width {width} is not divisible by 256"
                 )));
@@ -438,7 +434,7 @@ fn tensor_row_size(ggml_type: u32, width: usize) -> Result<usize> {
 }
 
 fn dequantize_row_q8_0(row: &[u8], width: usize) -> Result<Vec<f32>> {
-    if width % 32 != 0 {
+    if !width.is_multiple_of(32) {
         return Err(HybridError::UnsupportedFormat(format!(
             "Q8_0 width {width} is not divisible by 32"
         )));
@@ -455,7 +451,7 @@ fn dequantize_row_q8_0(row: &[u8], width: usize) -> Result<Vec<f32>> {
 }
 
 fn dequantize_row_q5_k(row: &[u8], width: usize) -> Result<Vec<f32>> {
-    if width % 256 != 0 {
+    if !width.is_multiple_of(256) {
         return Err(HybridError::UnsupportedFormat(format!(
             "Q5_K width {width} is not divisible by 256"
         )));

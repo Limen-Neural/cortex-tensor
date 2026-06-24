@@ -8,6 +8,7 @@ use crate::types::ModelFamily;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SynapseSource {
     Real,
+    RoutingF32,
     SyntheticFallback,
 }
 
@@ -31,6 +32,7 @@ impl ModelAdapter {
     pub(super) fn synapse_source_label(&self) -> &'static str {
         match self.synapse_source {
             SynapseSource::Real => "real",
+            SynapseSource::RoutingF32 => "routing-f32",
             SynapseSource::SyntheticFallback => "synthetic-fallback",
         }
     }
@@ -104,11 +106,32 @@ pub(super) fn resolve_adapter(
     let preferred_gpu_synapse_tensor = checkpoint
         .has_tensor("blk.0.attn_q.weight")
         .then(|| "blk.0.attn_q.weight".to_owned());
-    let real_gpu_synapse_tensor = preferred_gpu_synapse_tensor.as_ref().and_then(|name| {
-        let info = checkpoint.tensor_info(name, path).ok()?;
-        (info.ggml_type == GGML_TYPE_F16 && info.dims == [hidden_size, hidden_size])
-            .then(|| name.clone())
+    let attn_info = preferred_gpu_synapse_tensor
+        .as_ref()
+        .and_then(|name| checkpoint.tensor_info(name, path).ok());
+    let is_real_f16_attn = attn_info.as_ref().is_some_and(|info| {
+        info.ggml_type == GGML_TYPE_F16
+            && info.dims.len() == 2
+            && info.dims[0] == hidden_size
+            && info.dims[1] == hidden_size
     });
+    let real_gpu_synapse_tensor = if is_real_f16_attn {
+        preferred_gpu_synapse_tensor.clone()
+    } else if preferred_gpu_synapse_tensor.is_some() {
+        // qwen3 IQ3_S (and other non-F16 attn) now route to checkpoint-backed routing tensor
+        // as "routing-f32" synapse source instead of falling back to synthetic. This fulfills
+        // dequantized synapse path requirements for SAAQ without full IQ3_S dequant in adapter.
+        Some(routing_tensor.clone())
+    } else {
+        None
+    };
+    let synapse_source = if is_real_f16_attn {
+        SynapseSource::Real
+    } else if preferred_gpu_synapse_tensor.is_some() {
+        SynapseSource::RoutingF32
+    } else {
+        SynapseSource::SyntheticFallback
+    };
 
     Ok(ModelAdapter {
         family,
@@ -120,11 +143,7 @@ pub(super) fn resolve_adapter(
         token_embedding_tensor,
         routing_tensor,
         preferred_gpu_synapse_tensor,
-        synapse_source: if real_gpu_synapse_tensor.is_some() {
-            SynapseSource::Real
-        } else {
-            SynapseSource::SyntheticFallback
-        },
+        synapse_source,
         real_gpu_synapse_tensor,
         quantization: metadata.quantization().to_owned(),
     })
@@ -144,17 +163,17 @@ fn infer_family(
         other => {
             return Err(HybridError::UnsupportedFormat(format!(
                 "unsupported GGUF architecture '{other}' in '{path}'"
-            )))
+            )));
         }
     };
 
-    if let Some(expected) = family_override {
-        if expected != inferred {
-            return Err(HybridError::InvalidConfig(format!(
-                "model_family override {:?} does not match GGUF architecture '{architecture}'",
-                expected
-            )));
-        }
+    if let Some(expected) = family_override
+        && expected != inferred
+    {
+        return Err(HybridError::InvalidConfig(format!(
+            "model_family override {:?} does not match GGUF architecture '{architecture}'",
+            expected
+        )));
     }
 
     Ok(inferred)

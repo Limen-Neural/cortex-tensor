@@ -1,0 +1,56 @@
+# Azure Pipelines for cross-platform parity with GitHub Actions (addresses chore 6p8)
+# Triggers on main and PRs to main.
+trigger:
+  branches:
+    include:
+      - main
+pr:
+  branches:
+    include:
+      - main
+
+variables:
+  CARGO_TERM_COLOR: always
+
+jobs:
+- job: Linux
+  pool:
+    vmImage: 'ubuntu-latest'
+  steps:
+  - checkout: self
+    persistCredentials: false
+  - script: |
+      curl https://sh.rustup.rs -sSf | sh -s -- -y
+      source $HOME/.cargo/env
+      cargo fmt --all -- --check
+      cargo build --verbose
+      cargo test --verbose
+      cargo clippy --all-targets --all-features -- -D warnings
+    displayName: 'Build, test, fmt, clippy on Linux'
+
+- job: macOS
+  pool:
+    vmImage: 'macOS-latest'
+  steps:
+  - checkout: self
+    persistCredentials: false
+  - script: |
+      curl https://sh.rustup.rs -sSf | sh -s -- -y
+      source $HOME/.cargo/env
+      cargo build --verbose
+      cargo test --verbose
+    displayName: 'Build + test on macOS'
+
+- job: Windows
+  pool:
+    vmImage: 'windows-latest'
+  steps:
+  - checkout: self
+    persistCredentials: false
+  - script: |
+      curl https://sh.rustup.rs -sSf | sh -s -- -y
+      %USERPROFILE%\.cargo\bin\cargo build --verbose
+      %USERPROFILE%\.cargo\bin\cargo test --verbose
+    displayName: 'Build + test on Windows'
+    env:
+      CARGO_TERM_COLOR: always

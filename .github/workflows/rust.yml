@@ -11,12 +11,45 @@ env:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    # Pinned checkout + persist-credentials:false (Aikido high-sev / CodeRabbit zizmor / Codacy)
+    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      with:
+        persist-credentials: false
+
     - name: Build
       run: cargo build --verbose
+
     - name: Run tests
       run: cargo test --verbose
+
+    - name: Format check
+      run: cargo fmt --all -- --check
+
+    - name: Clippy
+      run: cargo clippy --all-targets --all-features -- -D warnings
+
+    # reviewdog for inline PR comments from clippy (addresses chore reviewdog integration)
+    - name: Setup reviewdog
+      uses: reviewdog/action-setup@970367689bb2eebe6da1623ced4968681b6386ea
+    - name: Clippy with reviewdog (PR comments)
+      env:
+        REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        cargo clippy --all-targets --all-features --message-format=json | \
+          reviewdog -f=clippy -reporter=github-pr-review -level=warning || true
+      # note: || true only for reporter step to not fail PR on comment issues; main clippy above fails hard
+
+    # Snyk: pinned setup using exact SHA (for official Snyk logo in UI per Aikido), no || true (CodeRabbit)
+    - name: Snyk setup (pinned SHA for branding)
+      uses: snyk/actions/setup@8e119fbb6c251787721d34ba683ed48eba792766
+    - name: Snyk test (open source / deps)
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      run: snyk test --all-projects --severity-threshold=high
+    - name: Snyk code test (SAST)
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      run: snyk code test --severity-threshold=high

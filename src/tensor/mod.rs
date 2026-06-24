@@ -184,21 +184,13 @@ impl Tensor {
     }
 
     pub fn silu(&self) -> Self {
-        let data: Vec<f32> = self
-            .data
-            .iter()
-            .map(|&x| x / (1.0 + (-x).exp()))
-            .collect();
+        let data: Vec<f32> = self.data.iter().map(|&x| x / (1.0 + (-x).exp())).collect();
         Self::from_vec(data, &self.shape)
     }
 
     /// Fast sigmoid surrogate gradient (from soma-engine's E-prop)
     pub fn fast_sigmoid(&self) -> Self {
-        let data: Vec<f32> = self
-            .data
-            .iter()
-            .map(|&x| x / (1.0 + x.abs()))
-            .collect();
+        let data: Vec<f32> = self.data.iter().map(|&x| x / (1.0 + x.abs())).collect();
         Self::from_vec(data, &self.shape)
     }
 
