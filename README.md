@@ -71,7 +71,7 @@ Supported GGUF tensor types: `F32`, `F16`, `Q8_0`, `Q5_K`. `IQ3_S` is detected a
 
 - `OlmoeRouter::load` / `load_with_family_and_mode` → `probe_and_map` calls `resolve_adapter` (adapter.rs).
 - `resolve_adapter` infers family from arch, validates routing tensor (must be F32 rank-2), selects token_embd or tok_embeddings, sets `preferred_gpu_synapse_tensor` to `blk.0.attn_q.weight` when present.
-- Synapse source selection (updated for qwen3 IQ3_S): if attn_q is exactly F16 + square hidden_size → `real`; elif attn_q present → `routing-f32` (real name = routing tensor name); else `synthetic-fallback`.
+- Synapse source selection (updated for qwen3 IQ3_S): if attn_q is F16 rank-2 containing hidden_size (relaxed from strict square to support GQA) → `real`; elif attn_q present → `routing-f32` (real name = routing tensor name); else `synthetic-fallback`.
 - Routing always uses `routing_tensor` via `checkpoint_gate_scores` (routing.rs) when checkpoint loaded (never synthetic for real loads).
 - `extract_named_token_embedding_from_checkpoint` (checkpoint.rs) supports dequant for Q8_0/Q5_K (and F32/F16); IQ3_S errors for embeddings.
 - Public metadata exposes `preferred_gpu_synapse_tensor_name`, `real_gpu_synapse_tensor_name`, `synapse_source` for SAAQ experiment / Surrogate_Viz consumers to choose dequant vs. synthetic path and load the right tensor (f16 path or f32 routing path).

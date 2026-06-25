@@ -32,19 +32,3 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "deps(julia)"
-
-  # Python (for parity)
-  - package-ecosystem: "pip"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-
-  # Docker base images (for parity with corinth-canal etc)
-  - package-ecosystem: "docker"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    commit-message:
-      prefix: "deps(docker)"

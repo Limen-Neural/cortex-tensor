@@ -384,7 +384,10 @@ impl MappedGgufCheckpoint {
                     path: path.to_owned(),
                     reason: format!("tensor '{tensor_name}' row offset overflow"),
                 })?;
-        let end = start + row_size;
+        let end = start.checked_add(row_size).ok_or_else(|| HybridError::ModelLoad {
+            path: path.to_owned(),
+            reason: format!("tensor '{tensor_name}' row offset overflow"),
+        })?;
         if end > self.mmap.len() {
             return Err(HybridError::ModelLoad {
                 path: path.to_owned(),
