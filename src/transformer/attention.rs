@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use crate::tensor::Tensor;
 use crate::tensor::ops::{batched_matmul, causal_mask, matmul};
 use serde::{Deserialize, Serialize};

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! GGUF checkpoint parsing and mapped tensor access for the router bridge.
 
 use super::{

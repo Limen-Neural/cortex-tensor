@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Public MoE router API backed by a family-aware GGUF bridge.
 //!
 //! Private helpers live in:

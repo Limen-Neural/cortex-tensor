@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Minimal shared types used by the `moe` module.
 //!
 //! Ported from `corinth-canal` with SNN-specific items removed.
