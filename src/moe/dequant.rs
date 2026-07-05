@@ -1,0 +1,150 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! Quantized tensor dequantization helpers (Q8_0, Q5_K, etc.).
+
+use crate::error::{HybridError, Result};
+
+#[allow(clippy::manual_is_multiple_of)]
+pub(crate) fn tensor_row_size(ggml_type: u32, width: usize) -> Result<usize> {
+    match ggml_type {
+        super::GGML_TYPE_Q8_0 => {
+            if width % 32 != 0 {
+                return Err(HybridError::UnsupportedFormat(format!(
+                    "Q8_0 tensor width {width} is not divisible by 32"
+                )));
+            }
+            Ok((width / 32) * (2 + 32))
+        }
+        super::GGML_TYPE_Q5_K => {
+            if width % 256 != 0 {
+                return Err(HybridError::UnsupportedFormat(format!(
+                    "Q5_K tensor width {width} is not divisible by 256"
+                )));
+            }
+            Ok((width / 256) * (2 + 2 + 12 + 32 + 128))
+        }
+        other => Err(HybridError::UnsupportedFormat(format!(
+            "row-size lookup is not implemented for ggml_type={other}"
+        ))),
+    }
+}
+
+#[allow(clippy::manual_is_multiple_of)]
+pub(crate) fn dequantize_row_q8_0(row: &[u8], width: usize) -> Result<Vec<f32>> {
+    if width % 32 != 0 {
+        return Err(HybridError::UnsupportedFormat(format!(
+            "Q8_0 width {width} is not divisible by 32"
+        )));
+    }
+
+    let mut out = Vec::with_capacity(width);
+    for block in row.chunks_exact(34) {
+        let d = f16_to_f32(u16::from_le_bytes([block[0], block[1]]));
+        for &quant in &block[2..34] {
+            out.push((quant as i8) as f32 * d);
+        }
+    }
+    Ok(out)
+}
+
+#[allow(clippy::manual_is_multiple_of)]
+pub(crate) fn dequantize_row_q5_k(row: &[u8], width: usize) -> Result<Vec<f32>> {
+    if width % 256 != 0 {
+        return Err(HybridError::UnsupportedFormat(format!(
+            "Q5_K width {width} is not divisible by 256"
+        )));
+    }
+
+    let mut out = Vec::with_capacity(width);
+    for block in row.chunks_exact(176) {
+        let d = f16_to_f32(u16::from_le_bytes([block[0], block[1]]));
+        let dmin = f16_to_f32(u16::from_le_bytes([block[2], block[3]]));
+        let scales = &block[4..16];
+        let qh = &block[16..48];
+        let ql = &block[48..176];
+
+        let mut is = 0usize;
+        let mut u1 = 1u8;
+        let mut u2 = 2u8;
+
+        for ql_chunk in ql.chunks_exact(32) {
+            let (sc1, m1) = scale_min_k4(is, scales);
+            let (sc2, m2) = scale_min_k4(is + 1, scales);
+            let d1 = d * sc1 as f32;
+            let mn1 = dmin * m1 as f32;
+            let d2 = d * sc2 as f32;
+            let mn2 = dmin * m2 as f32;
+
+            for (lane, &q) in ql_chunk.iter().enumerate() {
+                let qh_byte = qh[lane];
+                let hi1 = if qh_byte & u1 != 0 { 16 } else { 0 };
+                let hi2 = if qh_byte & u2 != 0 { 16 } else { 0 };
+                out.push(d1 * ((q & 0x0F) + hi1) as f32 - mn1);
+                out.push(d2 * ((q >> 4) + hi2) as f32 - mn2);
+            }
+
+            is += 2;
+            u1 <<= 2;
+            u2 <<= 2;
+        }
+    }
+    Ok(out)
+}
+
+fn scale_min_k4(index: usize, scales: &[u8]) -> (u8, u8) {
+    let s = scales[index / 2];
+    if index % 2 == 0 {
+        (s & 0xF, s >> 4)
+    } else {
+        (s >> 4, s & 0xF)
+    }
+}
+
+pub(crate) fn f16_to_f32(bits: u16) -> f32 {
+    let sign = (bits >> 15) & 1;
+    let exp = (bits >> 10) & 0x1F;
+    let mant = bits & 0x3FF;
+
+    if exp == 0 {
+        // Subnormal
+        let val = (mant as f32) / 1024.0;
+        if sign == 1 { -val } else { val }
+    } else if exp == 0x1F {
+        // Inf / NaN
+        if mant == 0 {
+            if sign == 1 { f32::NEG_INFINITY } else { f32::INFINITY }
+        } else {
+            f32::NAN
+        }
+    } else {
+        let exp = exp as i32 - 15;
+        let val = (1.0 + (mant as f32) / 1024.0) * (2.0f32.powi(exp));
+        if sign == 1 { -val } else { val }
+    }
+}
+
+pub(crate) fn tensor_block_sort_key(name: &str) -> (usize, &str) {
+    let block = name
+        .strip_prefix("blk.")
+        .and_then(|rest| rest.split_once('.'))
+        .and_then(|(idx, _)| idx.parse::<usize>().ok())
+        .unwrap_or(usize::MAX);
+    (block, name)
+}
+
+pub(crate) fn quantization_label(file_type: Option<u32>) -> String {
+    match file_type {
+        Some(0) => "F32".into(),
+        Some(1) => "F16".into(),
+        Some(other) => format!("GGUF({other})"),
+        None => "GGUF".into(),
+    }
+}
+
+pub(crate) fn align_up(value: usize, alignment: usize) -> usize {
+    if alignment == 0 {
+        value
+    } else {
+        value.div_ceil(alignment) * alignment
+    }
+}
