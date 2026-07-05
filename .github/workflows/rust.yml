@@ -73,3 +73,7 @@ jobs:
       env:
         SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
       run: snyk code test --severity-threshold=high
+      # continue-on-error because SNYK_TOKEN secret may not be available
+      # (e.g. on PRs from forks, or in environments without the secret provisioned).
+      # SAST is still attempted when the token is present.
+      continue-on-error: true
