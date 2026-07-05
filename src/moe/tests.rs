@@ -5,7 +5,14 @@ use std::io::Write;
 use std::path::PathBuf;
 
 fn write_temp_file(bytes: &[u8], label: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!(
+    // Use a project-local temp dir instead of std::env::temp_dir() to satisfy
+    // security linters (e.g. Codacy) that flag temp_dir for potential issues.
+    let mut path = std::env::current_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .join("target")
+        .join("test-gguf");
+    std::fs::create_dir_all(&path).ok();
+    path.push(format!(
         "corinth_canal_{label}_{}.gguf",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
