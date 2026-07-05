@@ -8,11 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+
 - Switched license from GPL-3.0 to dual MIT/Apache-2.0 for broader adoption and compatibility with other projects in the Limen-Neural organization.
 
 ## [0.1.0] - 2026-06-25
 
 ### Added
+
 - Initial release of cortex-tensor as standalone crate (extracted from corinth-canal).
 - Tensor, ops, transformer, and MoE (GGUF) modules.
 - Optional Sentry integration feature.
