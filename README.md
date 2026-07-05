@@ -3,7 +3,7 @@
 Pure-Rust tensor, transformer, and Mixture-of-Experts building blocks. No CUDA, no Julia FFI, no framework dependencies — just `Vec<f32>` and honest math.
 
 [![Rust](https://img.shields.io/badge/rust-edition%202024-orange)](https://www.rust-lang.org/)
-[![License](https://img.shields.io/badge/license-MIT%2FApache-blue)](./LICENSE-MIT)
+[![License](https://img.shields.io/badge/license-MIT%2FApache-blue)](./LICENSE-APACHE-2.0)
 
 ## Overview
 
