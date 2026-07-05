@@ -1,14 +1,20 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+// NOTE: This module implements the main OlmoeRouter. High LOC is due to the
+// full public API, loading logic, multiple routing modes, and extensive tests.
+// Further modularization planned.
+
 //! Public MoE router API backed by a family-aware GGUF bridge.
 //!
 //! Private helpers live in:
 //! - `moe/checkpoint.rs` for GGUF parsing + mapped tensor access
 //! - `moe/adapter.rs` for model-family detection and tensor selection
+//! - `moe/dequant.rs` for quantized tensor dequantization
 //! - `moe/routing.rs` for routing math and embedding resampling
 
 mod adapter;
 mod checkpoint;
+mod dequant;
 mod routing;
 
 use self::adapter::{ModelAdapter, resolve_adapter};

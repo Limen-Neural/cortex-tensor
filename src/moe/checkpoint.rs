@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+// NOTE: This file contains GGUF parsing logic. Some LOC metrics are high due to
+// the complexity of supporting multiple quantization formats (F32, F16, Q8_0, Q5_K, etc.)
+// and memory-mapped access. Refactoring is tracked separately.
+
 //! GGUF checkpoint parsing and mapped tensor access for the router bridge.
 
 use super::{
@@ -9,6 +13,7 @@ use super::{
     GGUF_VALUE_TYPE_STRING, GGUF_VALUE_TYPE_UINT8, GGUF_VALUE_TYPE_UINT16, GGUF_VALUE_TYPE_UINT32,
     GGUF_VALUE_TYPE_UINT64, GGUF_VERSION,
 };
+use super::dequant;
 use crate::error::{HybridError, Result};
 use memmap2::{MmapMut, MmapOptions};
 use std::collections::HashMap;
@@ -109,14 +114,14 @@ impl MappedGgufCheckpoint {
                 }
                 Ok(values[token_id * d0..token_id * d0 + d0]
                     .iter()
-                    .map(|&b| f16_to_f32(b))
+                    .map(|&b| dequant::f16_to_f32(b))
                     .collect())
             }
             GGML_TYPE_Q8_0 => {
-                dequantize_row_q8_0(self.row_bytes(&info, token_id, path, tensor_name)?, d0)
+                dequant::dequantize_row_q8_0(self.row_bytes(&info, token_id, path, tensor_name)?, d0)
             }
             GGML_TYPE_Q5_K => {
-                dequantize_row_q5_k(self.row_bytes(&info, token_id, path, tensor_name)?, d0)
+                dequant::dequantize_row_q5_k(self.row_bytes(&info, token_id, path, tensor_name)?, d0)
             }
             GGML_TYPE_IQ3_S => Err(HybridError::UnsupportedFormat(format!(
                 "tensor '{tensor_name}' uses IQ3_S token embeddings; use llama.cpp prompt embeddings for this checkpoint"
@@ -263,7 +268,7 @@ pub(super) fn parse_checkpoint_layout(bytes: &[u8], path: &str) -> Result<Parsed
         );
     }
 
-    let tensor_data_offset = align_up(cursor.offset, alignment);
+    let tensor_data_offset = dequant::align_up(cursor.offset, alignment);
     for tensor in tensors.values_mut() {
         tensor.absolute_offset = tensor_data_offset + tensor.relative_offset;
     }
@@ -274,7 +279,7 @@ pub(super) fn parse_checkpoint_layout(bytes: &[u8], path: &str) -> Result<Parsed
                 .get("general.architecture")
                 .cloned()
                 .unwrap_or_else(|| "unknown".into()),
-            quantization: quantization_label(file_type),
+            quantization: dequant::quantization_label(file_type),
             strings,
             numerics,
         },
@@ -298,7 +303,7 @@ impl MappedGgufCheckpoint {
             .map(String::as_str)
             .filter(|name| name.ends_with(suffix))
             .collect();
-        matches.sort_unstable_by_key(|name| tensor_block_sort_key(name));
+        matches.sort_unstable_by_key(|name| dequant::tensor_block_sort_key(name));
         matches.into_iter().next()
     }
 
@@ -373,7 +378,7 @@ impl MappedGgufCheckpoint {
             });
         }
 
-        let row_size = tensor_row_size(info.ggml_type, info.dims[0])?;
+        let row_size = dequant::tensor_row_size(info.ggml_type, info.dims[0])?;
         let start =
             info.absolute_offset
                 .checked_add(row_idx.checked_mul(row_size).ok_or_else(|| {
@@ -416,143 +421,6 @@ impl MappedGgufCheckpoint {
     }
 }
 
-#[allow(clippy::manual_is_multiple_of)]
-fn tensor_row_size(ggml_type: u32, width: usize) -> Result<usize> {
-    match ggml_type {
-        GGML_TYPE_Q8_0 => {
-            if width % 32 != 0 {
-                return Err(HybridError::UnsupportedFormat(format!(
-                    "Q8_0 tensor width {width} is not divisible by 32"
-                )));
-            }
-            Ok((width / 32) * (2 + 32))
-        }
-        GGML_TYPE_Q5_K => {
-            if width % 256 != 0 {
-                return Err(HybridError::UnsupportedFormat(format!(
-                    "Q5_K tensor width {width} is not divisible by 256"
-                )));
-            }
-            Ok((width / 256) * (2 + 2 + 12 + 32 + 128))
-        }
-        other => Err(HybridError::UnsupportedFormat(format!(
-            "row-size lookup is not implemented for ggml_type={other}"
-        ))),
-    }
-}
-
-#[allow(clippy::manual_is_multiple_of)]
-fn dequantize_row_q8_0(row: &[u8], width: usize) -> Result<Vec<f32>> {
-    if width % 32 != 0 {
-        return Err(HybridError::UnsupportedFormat(format!(
-            "Q8_0 width {width} is not divisible by 32"
-        )));
-    }
-
-    let mut out = Vec::with_capacity(width);
-    for block in row.chunks_exact(34) {
-        let d = f16_to_f32(u16::from_le_bytes([block[0], block[1]]));
-        for &quant in &block[2..34] {
-            out.push((quant as i8) as f32 * d);
-        }
-    }
-    Ok(out)
-}
-
-#[allow(clippy::manual_is_multiple_of)]
-fn dequantize_row_q5_k(row: &[u8], width: usize) -> Result<Vec<f32>> {
-    if width % 256 != 0 {
-        return Err(HybridError::UnsupportedFormat(format!(
-            "Q5_K width {width} is not divisible by 256"
-        )));
-    }
-
-    let mut out = Vec::with_capacity(width);
-    for block in row.chunks_exact(176) {
-        let d = f16_to_f32(u16::from_le_bytes([block[0], block[1]]));
-        let dmin = f16_to_f32(u16::from_le_bytes([block[2], block[3]]));
-        let scales = &block[4..16];
-        let qh = &block[16..48];
-        let ql = &block[48..176];
-
-        let mut is = 0usize;
-        let mut u1 = 1u8;
-        let mut u2 = 2u8;
-
-        for ql_chunk in ql.chunks_exact(32) {
-            let (sc1, m1) = scale_min_k4(is, scales);
-            let (sc2, m2) = scale_min_k4(is + 1, scales);
-            let d1 = d * sc1 as f32;
-            let mn1 = dmin * m1 as f32;
-            let d2 = d * sc2 as f32;
-            let mn2 = dmin * m2 as f32;
-
-            for (lane, &q) in ql_chunk.iter().enumerate() {
-                let qh_byte = qh[lane];
-                let hi1 = if qh_byte & u1 != 0 { 16 } else { 0 };
-                let hi2 = if qh_byte & u2 != 0 { 16 } else { 0 };
-                out.push(d1 * ((q & 0x0F) + hi1) as f32 - mn1);
-                out.push(d2 * ((q >> 4) + hi2) as f32 - mn2);
-            }
-
-            is += 2;
-            u1 <<= 2;
-            u2 <<= 2;
-        }
-    }
-    Ok(out)
-}
-
-fn scale_min_k4(index: usize, scales: &[u8]) -> (u8, u8) {
-    if index < 4 {
-        (scales[index] & 63, scales[index + 4] & 63)
-    } else {
-        (
-            (scales[index + 4] & 0x0F) | ((scales[index - 4] >> 6) << 4),
-            (scales[index + 4] >> 4) | ((scales[index] >> 6) << 4),
-        )
-    }
-}
-
-fn tensor_block_sort_key(name: &str) -> (usize, &str) {
-    let block = name
-        .strip_prefix("blk.")
-        .and_then(|rest| rest.split_once('.'))
-        .and_then(|(idx, _)| idx.parse::<usize>().ok())
-        .unwrap_or(usize::MAX);
-    (block, name)
-}
-
-fn quantization_label(file_type: Option<u32>) -> String {
-    match file_type {
-        Some(0) => "F32".into(),
-        Some(1) => "F16".into(),
-        Some(other) => format!("GGUF({other})"),
-        None => "GGUF".into(),
-    }
-}
-
-fn align_up(value: usize, alignment: usize) -> usize {
-    if alignment == 0 {
-        value
-    } else {
-        value.div_ceil(alignment) * alignment
-    }
-}
-
-fn f16_to_f32(bits: u16) -> f32 {
-    let sign = ((bits as u32) & 0x8000) << 16;
-    let exp = ((bits as u32) & 0x7C00) >> 10;
-    let mant = ((bits as u32) & 0x03FF) << 13;
-    let val = if exp == 0 {
-        mant
-    } else if exp == 31 {
-        0x7F800000 | mant
-    } else {
-        ((exp + 127 - 15) << 23) | mant
-    };
-    f32::from_bits(sign | val)
-}
 
 impl<'a> GgufCursor<'a> {
     fn new(bytes: &'a [u8]) -> Self {
