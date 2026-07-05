@@ -193,6 +193,7 @@ fn test_q5k_dequant_smoke_runs_full_block_loop() {
     // without format errors (the math will produce garbage but the control
     // flow and bit ops execute).
     let block = vec![0u8; 176];
-    let out = super::dequant::dequantize_row_q5_k(&block, 256).expect("Q5_K row size should be accepted");
+    let out =
+        super::dequant::dequantize_row_q5_k(&block, 256).expect("Q5_K row size should be accepted");
     assert_eq!(out.len(), 256);
 }
