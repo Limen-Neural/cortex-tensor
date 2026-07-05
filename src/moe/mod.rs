@@ -31,7 +31,13 @@ use crate::error::{HybridError, Result};
 pub use crate::types::RoutingMode;
 use crate::types::{EMBEDDING_DIM, ModelFamily};
 
-pub(super) use self::gguf::*;
+pub(crate) use self::gguf::{
+    GGML_TYPE_F16, GGML_TYPE_F32, GGML_TYPE_IQ3_S, GGML_TYPE_Q5_K, GGML_TYPE_Q8_0, GGUF_MAGIC,
+    GGUF_VALUE_TYPE_ARRAY, GGUF_VALUE_TYPE_BOOL, GGUF_VALUE_TYPE_FLOAT32, GGUF_VALUE_TYPE_FLOAT64,
+    GGUF_VALUE_TYPE_INT8, GGUF_VALUE_TYPE_INT16, GGUF_VALUE_TYPE_INT32, GGUF_VALUE_TYPE_INT64,
+    GGUF_VALUE_TYPE_STRING, GGUF_VALUE_TYPE_UINT8, GGUF_VALUE_TYPE_UINT16, GGUF_VALUE_TYPE_UINT32,
+    GGUF_VALUE_TYPE_UINT64, GGUF_VERSION,
+};
 
 pub struct OlmoeRouter {
     model_path: String,
@@ -416,4 +422,3 @@ impl OlmoeRouter {
 
 #[cfg(test)]
 mod tests;
-

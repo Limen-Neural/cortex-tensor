@@ -6,6 +6,7 @@
 
 //! GGUF checkpoint parsing and mapped tensor access for the router bridge.
 
+use super::dequant;
 use super::{
     GGML_TYPE_F16, GGML_TYPE_F32, GGML_TYPE_IQ3_S, GGML_TYPE_Q5_K, GGML_TYPE_Q8_0, GGUF_MAGIC,
     GGUF_VALUE_TYPE_ARRAY, GGUF_VALUE_TYPE_BOOL, GGUF_VALUE_TYPE_FLOAT32, GGUF_VALUE_TYPE_FLOAT64,
@@ -13,7 +14,6 @@ use super::{
     GGUF_VALUE_TYPE_STRING, GGUF_VALUE_TYPE_UINT8, GGUF_VALUE_TYPE_UINT16, GGUF_VALUE_TYPE_UINT32,
     GGUF_VALUE_TYPE_UINT64, GGUF_VERSION,
 };
-use super::dequant;
 use crate::error::{HybridError, Result};
 use memmap2::{MmapMut, MmapOptions};
 use std::collections::HashMap;
@@ -117,12 +117,14 @@ impl MappedGgufCheckpoint {
                     .map(|&b| dequant::f16_to_f32(b))
                     .collect())
             }
-            GGML_TYPE_Q8_0 => {
-                dequant::dequantize_row_q8_0(self.row_bytes(&info, token_id, path, tensor_name)?, d0)
-            }
-            GGML_TYPE_Q5_K => {
-                dequant::dequantize_row_q5_k(self.row_bytes(&info, token_id, path, tensor_name)?, d0)
-            }
+            GGML_TYPE_Q8_0 => dequant::dequantize_row_q8_0(
+                self.row_bytes(&info, token_id, path, tensor_name)?,
+                d0,
+            ),
+            GGML_TYPE_Q5_K => dequant::dequantize_row_q5_k(
+                self.row_bytes(&info, token_id, path, tensor_name)?,
+                d0,
+            ),
             GGML_TYPE_IQ3_S => Err(HybridError::UnsupportedFormat(format!(
                 "tensor '{tensor_name}' uses IQ3_S token embeddings; use llama.cpp prompt embeddings for this checkpoint"
             ))),
@@ -420,7 +422,6 @@ impl MappedGgufCheckpoint {
         self.u16_tensor_values(&info, path, name)
     }
 }
-
 
 impl<'a> GgufCursor<'a> {
     fn new(bytes: &'a [u8]) -> Self {

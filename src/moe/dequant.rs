@@ -91,6 +91,7 @@ pub(crate) fn dequantize_row_q5_k(row: &[u8], width: usize) -> Result<Vec<f32>> 
     Ok(out)
 }
 
+#[allow(clippy::manual_is_multiple_of)]
 fn scale_min_k4(index: usize, scales: &[u8]) -> (u8, u8) {
     let s = scales[index / 2];
     if index % 2 == 0 {
@@ -112,7 +113,11 @@ pub(crate) fn f16_to_f32(bits: u16) -> f32 {
     } else if exp == 0x1F {
         // Inf / NaN
         if mant == 0 {
-            if sign == 1 { f32::NEG_INFINITY } else { f32::INFINITY }
+            if sign == 1 {
+                f32::NEG_INFINITY
+            } else {
+                f32::INFINITY
+            }
         } else {
             f32::NAN
         }
