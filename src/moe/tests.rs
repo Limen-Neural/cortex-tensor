@@ -5,8 +5,14 @@ use std::io::Write;
 use std::path::PathBuf;
 
 fn write_temp_file(bytes: &[u8], label: &str) -> PathBuf {
-    // Use a project-local temp dir instead of std::env::temp_dir() to satisfy
-    // security linters (e.g. Codacy) that flag temp_dir for potential issues.
+    // Use a project-local temp dir (under target/) instead of std::env::temp_dir()
+    // to satisfy security linters (e.g. Codacy "temp_dir should not be used for
+    // security operations").
+    //
+    // target/ is the standard, always-writable location for cargo build/test
+    // artifacts, is gitignored, and works reliably in CI (GHA etc. run cargo
+    // which creates it under a writable workspace). Test files are cleaned up
+    // by individual tests or left for the next cargo clean.
     let mut path = std::env::current_dir()
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
         .join("target")
@@ -176,4 +182,17 @@ fn test_real_checkpoint_probe_via_env() {
     assert!(metadata.hidden_size > 0);
     assert!(metadata.num_experts > 0);
     assert!(!metadata.routing_tensor_name.is_empty());
+}
+
+/// Smoke test to exercise the full Q5_K dequant loop (4 chunks of 32 bytes
+/// for a 256-wide row). This runs the u1/u2 shifts and dequant math in debug
+/// mode (where overflow would previously panic on <<= for u8).
+#[test]
+fn test_q5k_dequant_smoke_runs_full_block_loop() {
+    // Zeroed 176-byte block is enough to execute all 4 ql chunks + shifts
+    // without format errors (the math will produce garbage but the control
+    // flow and bit ops execute).
+    let block = vec![0u8; 176];
+    let out = super::dequant::dequantize_row_q5_k(&block, 256).expect("Q5_K row size should be accepted");
+    assert_eq!(out.len(), 256);
 }

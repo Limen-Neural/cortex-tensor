@@ -66,8 +66,8 @@ pub(crate) fn dequantize_row_q5_k(row: &[u8], width: usize) -> Result<Vec<f32>> 
         let ql = &block[48..176];
 
         let mut is = 0usize;
-        let mut u1 = 1u8;
-        let mut u2 = 2u8;
+        let mut u1 = 1u16;
+        let mut u2 = 2u16;
 
         for ql_chunk in ql.chunks_exact(32) {
             let (sc1, m1) = scale_min_k4(is, scales);
@@ -79,8 +79,8 @@ pub(crate) fn dequantize_row_q5_k(row: &[u8], width: usize) -> Result<Vec<f32>> 
 
             for (lane, &q) in ql_chunk.iter().enumerate() {
                 let qh_byte = qh[lane];
-                let hi1 = if qh_byte & u1 != 0 { 16 } else { 0 };
-                let hi2 = if qh_byte & u2 != 0 { 16 } else { 0 };
+                let hi1 = if qh_byte & (u1 as u8) != 0 { 16 } else { 0 };
+                let hi2 = if qh_byte & (u2 as u8) != 0 { 16 } else { 0 };
                 out.push(d1 * ((q & 0x0F) + hi1) as f32 - mn1);
                 out.push(d2 * ((q >> 4) + hi2) as f32 - mn2);
             }
