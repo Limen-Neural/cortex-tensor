@@ -4,6 +4,8 @@
 
 use crate::error::{HybridError, Result};
 
+use half::f16;
+
 #[allow(clippy::manual_is_multiple_of)]
 pub(crate) fn tensor_row_size(ggml_type: u32, width: usize) -> Result<usize> {
     match ggml_type {
@@ -93,39 +95,20 @@ pub(crate) fn dequantize_row_q5_k(row: &[u8], width: usize) -> Result<Vec<f32>> 
 
 #[allow(clippy::manual_is_multiple_of)]
 fn scale_min_k4(index: usize, scales: &[u8]) -> (u8, u8) {
-    let s = scales[index / 2];
-    if index % 2 == 0 {
-        (s & 0xF, s >> 4)
+    // Restored from original GGUF Q5_K layout (matches llama.cpp get_scale_min_k4).
+    if index < 4 {
+        (scales[index] & 63, scales[index + 4] & 63)
     } else {
-        (s >> 4, s & 0xF)
+        (
+            (scales[index + 4] & 0x0F) | ((scales[index - 4] >> 6) << 4),
+            (scales[index + 4] >> 4) | ((scales[index] >> 6) << 4),
+        )
     }
 }
 
 pub(crate) fn f16_to_f32(bits: u16) -> f32 {
-    let sign = (bits >> 15) & 1;
-    let exp = (bits >> 10) & 0x1F;
-    let mant = bits & 0x3FF;
-
-    if exp == 0 {
-        // Subnormal
-        let val = (mant as f32) / 1024.0;
-        if sign == 1 { -val } else { val }
-    } else if exp == 0x1F {
-        // Inf / NaN
-        if mant == 0 {
-            if sign == 1 {
-                f32::NEG_INFINITY
-            } else {
-                f32::INFINITY
-            }
-        } else {
-            f32::NAN
-        }
-    } else {
-        let exp = exp as i32 - 15;
-        let val = (1.0 + (mant as f32) / 1024.0) * (2.0f32.powi(exp));
-        if sign == 1 { -val } else { val }
-    }
+    // Delegate to the half crate for correct IEEE 754 handling (including subnormals).
+    f16::from_bits(bits).to_f32()
 }
 
 pub(crate) fn tensor_block_sort_key(name: &str) -> (usize, &str) {
