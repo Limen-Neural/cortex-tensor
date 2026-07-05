@@ -65,7 +65,17 @@ src/
 | `RoutingMode` | `StubUniform`, `DenseSim`, `SpikingSim` (simulation-only; no GPU dispatch). |
 | `ModelFamily` | `Olmoe`, `Qwen3Moe`, `Gemma4`, `DeepSeek2`, `LlamaMoe`. |
 
-Supported GGUF tensor types: `F32`, `F16`, `Q8_0`, `Q5_K`. `IQ3_S` is detected and rejected with a clear error so callers can fall back to `llama.cpp` prompt embeddings.
+Supported GGUF tensor types: `F32`, `F16`, `Q8_0`, `Q5_K`. `IQ3_S` is detected and rejected (for token embeddings) with a clear error so callers can fall back to `llama.cpp` prompt embeddings. For the preferred GPU synapse tensor (e.g. attn_q on qwen3_moe_iq3_m), unsupported quants now correctly route to a checkpoint-backed `routing-f32` source (using the F32 routing tensor) instead of synthetic fallback. See `synapse_source()`, `real_gpu_synapse_tensor_name()`, and `OlmoeRouter` metadata.
+
+### GGUF adapter + synapse source + SAAQ flow (code paths)
+
+- `OlmoeRouter::load` / `load_with_family_and_mode` → `probe_and_map` calls `resolve_adapter` (adapter.rs).
+- `resolve_adapter` infers family from arch, validates routing tensor (must be F32 rank-2), selects token_embd or tok_embeddings, sets `preferred_gpu_synapse_tensor` to `blk.0.attn_q.weight` when present.
+- Synapse source selection (updated for qwen3 IQ3_S): if attn_q is F16 rank-2 containing hidden_size (relaxed from strict square to support GQA) → `real`; elif attn_q present → `routing-f32` (real name = routing tensor name); else `synthetic-fallback`.
+- Routing always uses `routing_tensor` via `checkpoint_gate_scores` (routing.rs) when checkpoint loaded (never synthetic for real loads).
+- `extract_named_token_embedding_from_checkpoint` (checkpoint.rs) supports dequant for Q8_0/Q5_K (and F32/F16); IQ3_S errors for embeddings.
+- Public metadata exposes `preferred_gpu_synapse_tensor_name`, `real_gpu_synapse_tensor_name`, `synapse_source` for SAAQ experiment / Surrogate_Viz consumers to choose dequant vs. synthetic path and load the right tensor (f16 path or f32 routing path).
+- SAAQ artifacts (external): calibration runs consume the router to emit artifacts for viz; see labels on related issues for campaign.
 
 ## Install
 
@@ -107,6 +117,36 @@ let mut router = OlmoeRouter::load(
 )?;
 let (experts, weights) = router.route_for_token(/* token_id */ 42)?;
 ```
+
+## Optional Sentry monitoring
+
+Enable with the `sentry` feature (uses sentry-rust 0.48):
+
+```toml
+[dependencies]
+cortex-tensor = { git = "...", features = ["sentry"] }
+```
+
+Init guard example (call early in main or lib init; keep guard alive for duration of process).
+Note: the consuming crate/binary must explicitly enable the `sentry` feature on its `cortex-tensor` dependency
+(transitive features do not auto-activate). Then use the re-exported path (or add `sentry` as direct dep):
+
+```rust
+#[cfg(feature = "sentry")]
+let _sentry_guard = cortex_tensor::sentry::init((
+    "https://<key>@sentry.io/<project>",
+    cortex_tensor::sentry::ClientOptions {
+        release: cortex_tensor::sentry::release_name!(),
+        environment: Some("production".into()),
+        ..Default::default()
+    },
+));
+
+// Your app code; errors auto captured when panics or cortex_tensor::sentry::capture_message etc used.
+// (The re-export brings the full sentry crate API under the feature gate.)
+```
+
+When the feature is off the re-export is not present (guarded).
 
 ## Non-goals
 

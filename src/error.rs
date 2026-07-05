@@ -4,13 +4,25 @@ use thiserror::Error;
 pub enum CortexError {
     // ── Tensor / math errors ──────────────────────────────────────────────
     #[error("tensor shape mismatch: expected {expected:?}, got {got:?}")]
-    ShapeMismatch { expected: Vec<usize>, got: Vec<usize> },
+    ShapeMismatch {
+        expected: Vec<usize>,
+        got: Vec<usize>,
+    },
 
     #[error("dimension mismatch for matmul: [{m}×{k1}] × [{k2}×{n}]")]
-    MatmulDim { m: usize, k1: usize, k2: usize, n: usize },
+    MatmulDim {
+        m: usize,
+        k1: usize,
+        k2: usize,
+        n: usize,
+    },
 
     #[error("index {index} out of bounds for axis {axis} with size {size}")]
-    IndexOutOfBounds { axis: usize, index: usize, size: usize },
+    IndexOutOfBounds {
+        axis: usize,
+        index: usize,
+        size: usize,
+    },
 
     // ── Configuration errors ──────────────────────────────────────────────
     #[error("invalid configuration: {0}")]

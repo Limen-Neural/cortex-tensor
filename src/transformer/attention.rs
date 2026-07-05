@@ -1,5 +1,5 @@
 use crate::tensor::Tensor;
-use crate::tensor::ops::{matmul, batched_matmul, causal_mask};
+use crate::tensor::ops::{batched_matmul, causal_mask, matmul};
 use serde::{Deserialize, Serialize};
 
 /// Multi-head self-attention (replaces candle-nn attention layers).
@@ -79,8 +79,7 @@ impl MultiHeadAttention {
         let ctx = merge_heads(&ctx, seq_len, nh, hd);
 
         // Output projection
-        let out = matmul(&ctx, &self.wo).add(&broadcast_bias(&self.wb_o, seq_len));
-        out
+        matmul(&ctx, &self.wo).add(&broadcast_bias(&self.wb_o, seq_len))
     }
 
     /// Returns flattened parameter count for this layer.

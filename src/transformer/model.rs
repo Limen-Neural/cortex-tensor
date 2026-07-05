@@ -1,6 +1,6 @@
-use crate::tensor::Tensor;
-use crate::tensor::ops::{matmul, embedding, layer_norm};
 use super::block::TransformerBlock;
+use crate::tensor::Tensor;
+use crate::tensor::ops::{embedding, layer_norm, matmul};
 use serde::{Deserialize, Serialize};
 
 /// Configuration for a decoder-only transformer LM.
@@ -59,12 +59,12 @@ impl TransformerConfig {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TransformerLM {
     pub config: TransformerConfig,
-    pub tok_embed: Tensor,    // [vocab_size, dim]
-    pub pos_embed: Tensor,    // [max_seq_len, dim]
+    pub tok_embed: Tensor, // [vocab_size, dim]
+    pub pos_embed: Tensor, // [max_seq_len, dim]
     pub blocks: Vec<TransformerBlock>,
-    pub final_ln_w: Tensor,   // [dim]
-    pub final_ln_b: Tensor,   // [dim]
-    pub lm_head: Tensor,      // [dim, vocab_size]
+    pub final_ln_w: Tensor, // [dim]
+    pub final_ln_b: Tensor, // [dim]
+    pub lm_head: Tensor,    // [dim, vocab_size]
 }
 
 impl TransformerLM {

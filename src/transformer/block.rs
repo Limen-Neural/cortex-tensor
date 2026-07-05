@@ -1,15 +1,15 @@
-use crate::tensor::Tensor;
-use crate::tensor::ops::{matmul, layer_norm};
 use super::attention::MultiHeadAttention;
+use crate::tensor::Tensor;
+use crate::tensor::ops::{layer_norm, matmul};
 use serde::{Deserialize, Serialize};
 
 /// Feed-forward network (two linear layers with GELU activation).
 #[derive(Clone, Serialize, Deserialize)]
 pub struct FeedForward {
-    pub w1: Tensor,  // [dim, ff_dim]
-    pub b1: Tensor,  // [1, ff_dim]
-    pub w2: Tensor,  // [ff_dim, dim]
-    pub b2: Tensor,  // [1, dim]
+    pub w1: Tensor, // [dim, ff_dim]
+    pub b1: Tensor, // [1, ff_dim]
+    pub w2: Tensor, // [ff_dim, dim]
+    pub b2: Tensor, // [1, dim]
 }
 
 impl FeedForward {

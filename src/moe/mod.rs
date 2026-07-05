@@ -18,8 +18,8 @@ use self::routing::{
     softmax, synthetic_gate_scores, top_k_indices,
 };
 use crate::error::{HybridError, Result};
-use crate::types::{EMBEDDING_DIM, ModelFamily};
 pub use crate::types::RoutingMode;
+use crate::types::{EMBEDDING_DIM, ModelFamily};
 
 pub(super) const GGUF_MAGIC: [u8; 4] = [b'G', b'G', b'U', b'F'];
 pub(super) const GGUF_VERSION: u32 = 3;
@@ -197,10 +197,13 @@ impl OlmoeRouter {
     }
 
     pub fn extract_token_embedding(&mut self, token_id: usize) -> Result<Vec<f32>> {
-        let adapter = self.adapter.as_ref().ok_or_else(|| HybridError::ModelLoad {
-            path: self.model_path.clone(),
-            reason: "checkpoint not loaded".into(),
-        })?;
+        let adapter = self
+            .adapter
+            .as_ref()
+            .ok_or_else(|| HybridError::ModelLoad {
+                path: self.model_path.clone(),
+                reason: "checkpoint not loaded".into(),
+            })?;
         let checkpoint = self
             .checkpoint
             .as_mut()
@@ -217,6 +220,7 @@ impl OlmoeRouter {
         Ok(normalize_to_internal_embedding_dim(&embedding))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn synapse_weights_f16(&mut self, tensor_name: &str) -> Result<Vec<u16>> {
         let checkpoint = self
             .checkpoint

@@ -48,18 +48,17 @@ pub fn batched_matmul(a: &Tensor, b: &Tensor) -> Tensor {
     let batch = a.shape()[0];
     let m = a.shape()[1];
     let k = a.shape()[2];
-    let n;
 
     let b_is_batched = b.ndim() == 3;
-    if b_is_batched {
+    let n = if b_is_batched {
         assert_eq!(b.shape()[0], batch, "batched_matmul: batch mismatch");
         assert_eq!(b.shape()[1], k);
-        n = b.shape()[2];
+        b.shape()[2]
     } else {
         assert_eq!(b.ndim(), 2);
         assert_eq!(b.shape()[0], k);
-        n = b.shape()[1];
-    }
+        b.shape()[1]
+    };
 
     let mut out = vec![0.0f32; batch * m * n];
     let ad = a.data();
@@ -184,9 +183,9 @@ mod tests {
     #[test]
     fn test_causal_mask() {
         let m = causal_mask(3);
-        assert_eq!(m.data()[0], 0.0);   // [0,0]
+        assert_eq!(m.data()[0], 0.0); // [0,0]
         assert!(m.data()[1].is_infinite()); // [0,1] = -inf
-        assert_eq!(m.data()[4], 0.0);   // [1,1]
+        assert_eq!(m.data()[4], 0.0); // [1,1]
     }
 
     #[test]
