@@ -54,10 +54,10 @@ jobs:
       uses: snyk/actions/setup@8e119fbb6c251787721d34ba683ed48eba792766
     - name: Generate CycloneDX SBOM (for Rust Snyk scans)
       run: |
-        cargo install --locked cargo-cyclonedx 2>/dev/null || echo "cargo-cyclonedx install skipped"
-        # Use -o to write directly to file (cargo-cyclonedx does not write SBOM to stdout by default)
-        cargo cyclonedx --format json -o sbom.cdx.json 2>/dev/null || echo '{"bomFormat":"CycloneDX","specVersion":"1.5","version":1,"components":[]}' > sbom.cdx.json
-        # Ensure we have a valid (non-empty) SBOM file for the next step
+        cargo install --locked cargo-cyclonedx 2>/dev/null || true
+        # cargo-cyclonedx often fails or produces no/empty output on this crate
+        # (due to edition = "2024"). We attempt it, then guarantee a usable file.
+        cargo cyclonedx --format json -o sbom.cdx.json 2>/dev/null || true
         if [ ! -s sbom.cdx.json ]; then
           echo '{"bomFormat":"CycloneDX","specVersion":"1.5","version":1,"components":[]}' > sbom.cdx.json
         fi
