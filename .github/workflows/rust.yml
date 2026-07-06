@@ -12,6 +12,8 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
     steps:
     # Pinned checkout + persist-credentials:false (Aikido high-sev / CodeRabbit zizmor / Codacy)
@@ -24,6 +26,24 @@ jobs:
 
     - name: Run tests
       run: cargo test --verbose
+
+    # Codecov coverage using cargo-llvm-cov (separate codecov.yml per plan; modeled on corinth-canal)
+    - name: Install llvm-tools-preview
+      run: rustup component add llvm-tools-preview
+    - name: Install cargo-llvm-cov
+      uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419
+      with:
+        tool: cargo-llvm-cov
+    - name: Generate coverage report
+      run: cargo llvm-cov --lib --no-default-features --locked --lcov --output-path lcov.info
+    - name: Upload coverage to Codecov
+      if: ${{ env.CODECOV_TOKEN != '' }}
+      uses: codecov/codecov-action@04b047e8bb82a0c002c8312c1c880fbc6a999d45
+      with:
+        token: ${{ env.CODECOV_TOKEN }}
+        files: lcov.info
+        fail_ci_if_error: true
+        verbose: true
 
     - name: Format check
       run: cargo fmt --all -- --check
