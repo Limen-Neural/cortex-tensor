@@ -53,15 +53,15 @@ impl Tensor {
     }
 
     pub fn randn(shape: &[usize], mean: f32, std: f32) -> Self {
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
+        use rand::RngExt;
+        let mut rng = rand::rng();
         let numel: usize = shape.iter().product();
         let data: Vec<f32> = (0..numel)
             .map(|_| {
                 // Box-Muller transform
-                let u1: f32 = rng.gen_range(0.0f32..1.0).max(1e-7);
-                let u2: f32 = rng.gen_range(0.0f32..1.0);
-                let z = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos();
+                let u1: f32 = rng.random_range(0.0f32..1.0).max(1e-7);
+                let u2: f32 = rng.random_range(0.0f32..1.0);
+                let z = (-2.0f32 * u1.ln()).sqrt() * (2.0f32 * std::f32::consts::PI * u2).cos();
                 mean + std * z
             })
             .collect();
