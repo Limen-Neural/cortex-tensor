@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Routing math and embedding resampling for the GGUF router bridge.
 
 use super::checkpoint::{GgufTensorInfo, MappedGgufCheckpoint};

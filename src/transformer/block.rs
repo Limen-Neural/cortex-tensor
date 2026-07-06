@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use super::attention::MultiHeadAttention;
 use crate::tensor::Tensor;
 use crate::tensor::ops::{layer_norm, matmul};

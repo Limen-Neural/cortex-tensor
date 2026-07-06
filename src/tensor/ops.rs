@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use super::Tensor;
 
 /// Matrix multiply: [M×K] × [K×N] → [M×N]

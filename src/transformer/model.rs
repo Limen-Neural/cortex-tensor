@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use super::block::TransformerBlock;
 use crate::tensor::Tensor;
 use crate::tensor::ops::{embedding, layer_norm, matmul};
