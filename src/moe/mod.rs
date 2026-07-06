@@ -12,6 +12,15 @@
 //! - `moe/dequant.rs` for quantized tensor dequantization
 //! - `moe/gguf.rs` for GGUF constants
 //! - `moe/routing.rs` for routing math and embedding resampling
+//!
+//! ## Ecosystem note (see #9 coordination)
+//! Future multi-format support (Safetensors alongside GGUF) will use a dedicated
+//! reusable `safetensors-parser` crate (modeled on engram-parser for GGUF).
+//! The implementation and MoE candidate discovery logic is currently a
+//! reference copy in rmems/corinth-canal (see corinth-canal#116 and
+//! engram-parser#10). This crate will depend on the extracted parser rather
+//! than duplicating header/manifest/candidate logic. Planning/alignment only
+//! for now — no Safetensors backend or dep is implemented here.
 
 mod adapter;
 mod checkpoint;
