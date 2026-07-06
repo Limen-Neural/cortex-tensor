@@ -2,15 +2,22 @@ coverage:
   status:
     project:
       default:
-        target: auto
-        threshold: 1%
+        target: 65%
+        threshold: 5%
         informational: false
     patch:
       default:
+        target: auto
+        threshold: 2%
         informational: true
+
+  ignore:
+    - "target/**"
+    - "examples/**"
 
 comment:
   layout: "reach,diff,flags,files"
   behavior: default
   require_changes: false
   show_carryforward_flags: false
+

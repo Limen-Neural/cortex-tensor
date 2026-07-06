@@ -4,6 +4,7 @@ Pure-Rust tensor, transformer, and Mixture-of-Experts building blocks. No CUDA, 
 
 [![Rust](https://img.shields.io/badge/rust-edition%202024-orange)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-MIT%2FApache-blue)](./LICENSE-APACHE-2.0)
+[![codecov](https://codecov.io/gh/Limen-Neural/cortex-tensor/branch/main/graph/badge.svg)](https://codecov.io/gh/Limen-Neural/cortex-tensor)
 
 ## Overview
 
@@ -68,6 +69,8 @@ src/
 Supported GGUF tensor types: `F32`, `F16`, `Q8_0`, `Q5_K`. `IQ3_S` is detected and rejected (for token embeddings) with a clear error so callers can fall back to `llama.cpp` prompt embeddings. For the preferred GPU synapse tensor (e.g. attn_q on qwen3_moe_iq3_m), unsupported quants now correctly route to a checkpoint-backed `routing-f32` source (using the F32 routing tensor) instead of synthetic fallback. See `synapse_source()`, `real_gpu_synapse_tensor_name()`, and `OlmoeRouter` metadata.
 
 **Future formats (planning, see #9):** Safetensors support will arrive via a dedicated reusable `safetensors-parser` crate (header inspection + deterministic manifest + MoE candidate discovery), extracted as a one-way copy of reference logic from rmems/corinth-canal (see corinth-canal#116, engram-parser#10, and cortex #7/#8 for the GGUF precedent with engram-parser). No implementation or dependency is present yet — this keeps the reusable parser boundary clean. Cross-links and notes are maintained for alignment.
+
+See [docs/safetensors-parser-extraction.md](docs/safetensors-parser-extraction.md) for the detailed extraction spec / design note (based on direct inspection of corinth-canal).
 
 ### GGUF adapter + synapse source + SAAQ flow (code paths)
 
