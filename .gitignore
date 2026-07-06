@@ -3,10 +3,42 @@
 # Cargo lockfile (for library projects)
 Cargo.lock
 
-# IDE configuration
+# IDE / AI agent configuration and caches (do not commit local editor or agent state)
+.codex/
+.kilo/
+.mimocode/
+.cursor/
+.vscode/
+.idea/
+.claude/
+.aider*/
+.roo/
+.continue/
+
+# Windsurf (already present)
 .windsurf/
 
 # OLMo model weights and folders
 OLMoE-*/
 olmoe-*/
 *.gguf
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*~
+*.swp
+*.swo
+
+# Local env and secrets (never commit)
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Build / test artifacts not covered by /target
+*.log
+*.tmp
+tmp/
+cache/
