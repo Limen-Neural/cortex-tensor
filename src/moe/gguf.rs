@@ -2,7 +2,7 @@
 
 //! GGUF format constants.
 
-pub(crate) const GGUF_MAGIC: [u8; 4] = [b'G', b'G', b'U', b'F'];
+pub(crate) const GGUF_MAGIC: [u8; 4] = *b"GGUF";
 pub(crate) const GGUF_VERSION: u32 = 3;
 pub(crate) const GGML_TYPE_F32: u32 = 0;
 pub(crate) const GGML_TYPE_F16: u32 = 1;
