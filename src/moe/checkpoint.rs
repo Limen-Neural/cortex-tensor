@@ -43,10 +43,8 @@ pub(super) struct ParsedCheckpointLayout {
 
 #[derive(Debug, Clone, Default)]
 pub(super) struct GgufMetadata {
-    architecture: String,
-    quantization: String,
-    #[allow(dead_code)]
-    strings: HashMap<String, String>,
+    pub(super) architecture: String,
+    pub(super) quantization: String,
     numerics: HashMap<String, u64>,
 }
 
@@ -55,35 +53,15 @@ struct GgufCursor<'a> {
     offset: usize,
 }
 
-pub(super) fn extract_named_token_embedding_from_checkpoint(
-    checkpoint: &mut MappedGgufCheckpoint,
-    tensor_name: &str,
-    path: &str,
-    token_id: usize,
-) -> Result<Vec<f32>> {
-    checkpoint.extract_token_embedding(tensor_name, path, token_id)
-}
 
 impl GgufMetadata {
-    pub(super) fn architecture(&self) -> &str {
-        if self.architecture.is_empty() {
-            "unknown"
-        } else {
-            &self.architecture
-        }
-    }
-
-    pub(super) fn quantization(&self) -> &str {
-        &self.quantization
-    }
-
     pub(super) fn numeric(&self, key: &str) -> Option<usize> {
         self.numerics.get(key).copied().map(|v| v as usize)
     }
 }
 
 impl MappedGgufCheckpoint {
-    fn extract_token_embedding(
+    pub(super) fn extract_token_embedding(
         &mut self,
         tensor_name: &str,
         path: &str,
@@ -93,25 +71,20 @@ impl MappedGgufCheckpoint {
         let d0 = info.dims[0];
         let d1 = info.dims.get(1).copied().unwrap_or(0);
 
+        if token_id >= d1 {
+            return Err(HybridError::InputLengthMismatch {
+                expected: d1,
+                got: token_id,
+            });
+        }
+
         match info.ggml_type {
             GGML_TYPE_F32 => {
                 let weights = self.f32_tensor(tensor_name, path)?;
-                if token_id >= d1 {
-                    return Err(HybridError::InputLengthMismatch {
-                        expected: d1,
-                        got: token_id,
-                    });
-                }
                 Ok(weights[token_id * d0..token_id * d0 + d0].to_vec())
             }
             GGML_TYPE_F16 => {
                 let values = self.u16_tensor_values(&info, path, tensor_name)?;
-                if token_id >= d1 {
-                    return Err(HybridError::InputLengthMismatch {
-                        expected: d1,
-                        got: token_id,
-                    });
-                }
                 Ok(values[token_id * d0..token_id * d0 + d0]
                     .iter()
                     .map(|&b| dequant::f16_to_f32(b))
@@ -168,125 +141,147 @@ pub(super) fn probe_and_map_checkpoint(path: &str) -> Result<(GgufMetadata, Mapp
 
 pub(super) fn parse_checkpoint_layout(bytes: &[u8], path: &str) -> Result<ParsedCheckpointLayout> {
     let mut cursor = GgufCursor::new(bytes);
+    let (tensor_count, kv_count) = parse_header(&mut cursor, path)?;
+    let mut architecture = String::new();
+    let (alignment, file_type, numerics) =
+        read_metadata_kv(&mut cursor, kv_count, path, &mut architecture)?;
+    let mut tensors = HashMap::with_capacity(tensor_count);
+    for _ in 0..tensor_count {
+        let (name, info) = read_tensor_info(&mut cursor, path)?;
+        tensors.insert(name, info);
+    }
+    let tensor_data_offset = dequant::align_up(cursor.offset, alignment);
+    for tensor in tensors.values_mut() {
+        tensor.absolute_offset = tensor_data_offset + tensor.relative_offset;
+    }
+    Ok(ParsedCheckpointLayout {
+        metadata: GgufMetadata {
+            architecture: if architecture.is_empty() {
+                "unknown".into()
+            } else {
+                architecture
+            },
+            quantization: dequant::quantization_label(file_type),
+            numerics,
+        },
+        tensors,
+    })
+}
 
+fn parse_header(cursor: &mut GgufCursor, path: &str) -> Result<(usize, usize)> {
     let magic = cursor.read_exact(4, path)?;
     if magic != GGUF_MAGIC {
         return Err(HybridError::UnsupportedFormat(format!(
             "unrecognised model magic bytes: {magic:?}"
         )));
     }
-
     let version = cursor.read_u32(path)?;
     if version != GGUF_VERSION {
         return Err(HybridError::UnsupportedFormat(format!(
             "unsupported GGUF version {version}; expected {GGUF_VERSION}"
         )));
     }
-
-    // Sanity-bound the header counts to prevent OOM allocation from malformed files.
-    const MAX_TENSOR_COUNT: usize = 100_000;
-    const MAX_KV_COUNT: usize = 100_000;
-    const MAX_TENSOR_DIMS: usize = 8;
-
     let tensor_count_raw = cursor.read_u64(path)?;
-    if tensor_count_raw > MAX_TENSOR_COUNT as u64 {
+    if tensor_count_raw > 100_000u64 {
         return Err(HybridError::UnsupportedFormat(format!(
-            "tensor_count {tensor_count_raw} exceeds maximum allowed {MAX_TENSOR_COUNT}"
+            "tensor_count {tensor_count_raw} exceeds maximum allowed 100000"
         )));
     }
-    let tensor_count = tensor_count_raw as usize;
-
     let kv_count_raw = cursor.read_u64(path)?;
-    if kv_count_raw > MAX_KV_COUNT as u64 {
+    if kv_count_raw > 100_000u64 {
         return Err(HybridError::UnsupportedFormat(format!(
-            "kv_count {kv_count_raw} exceeds maximum allowed {MAX_KV_COUNT}"
+            "kv_count {kv_count_raw} exceeds maximum allowed 100000"
         )));
     }
-    let kv_count = kv_count_raw as usize;
+    Ok((tensor_count_raw as usize, kv_count_raw as usize))
+}
 
+fn read_metadata_kv(
+    cursor: &mut GgufCursor,
+    kv_count: usize,
+    path: &str,
+    architecture: &mut String,
+) -> Result<(usize, Option<u32>, HashMap<String, u64>)> {
     let mut alignment = 32usize;
     let mut file_type = None;
-    let mut strings = HashMap::new();
     let mut numerics = HashMap::new();
-
     for _ in 0..kv_count {
-        let key = cursor.read_string(path)?;
-        let value_type = cursor.read_u32(path)?;
-        match key.as_str() {
-            "general.alignment" => alignment = cursor.read_numeric_as_usize(value_type, path)?,
-            "general.file_type" => {
-                let value = cursor.read_numeric_as_u32(value_type, path)?;
-                file_type = Some(value);
-                numerics.insert(key, value as u64);
-            }
-            "general.architecture" => {
-                let value = cursor.read_string(path)?;
-                strings.insert(key, value);
-            }
-            _ => {
-                if let Some(value) = cursor.read_numeric_value(value_type, path)? {
-                    numerics.insert(key, value);
-                } else if value_type == GGUF_VALUE_TYPE_STRING {
-                    strings.insert(key, cursor.read_string(path)?);
-                } else {
-                    cursor.skip_value(value_type, path)?;
-                }
-            }
-        }
+        read_one_kv(cursor, path, &mut alignment, &mut file_type, architecture, &mut numerics)?;
     }
+    Ok((alignment, file_type, numerics))
+}
 
-    let mut tensors = HashMap::with_capacity(tensor_count);
-    for _ in 0..tensor_count {
-        let name = cursor.read_string(path)?;
-        let n_dims_raw = cursor.read_u32(path)? as usize;
-        if n_dims_raw > MAX_TENSOR_DIMS {
-            return Err(HybridError::UnsupportedFormat(format!(
-                "tensor '{name}' has {n_dims_raw} dims, which exceeds maximum allowed {MAX_TENSOR_DIMS}"
-            )));
+fn read_one_kv(
+    cursor: &mut GgufCursor,
+    path: &str,
+    alignment: &mut usize,
+    file_type: &mut Option<u32>,
+    architecture: &mut String,
+    numerics: &mut HashMap<String, u64>,
+) -> Result<()> {
+    let key = cursor.read_string(path)?;
+    let value_type = cursor.read_u32(path)?;
+    match key.as_str() {
+        "general.alignment" => Ok(*alignment = cursor.read_numeric_as_u32(value_type, path)? as usize),
+        "general.file_type" => {
+            let value = cursor.read_numeric_as_u32(value_type, path)?;
+            *file_type = Some(value);
+            numerics.insert("general.file_type".into(), value as u64);
+            Ok(())
         }
-        let n_dims = n_dims_raw;
-        let mut dims = Vec::with_capacity(n_dims);
-        for _ in 0..n_dims {
-            dims.push(cursor.read_u64(path)? as usize);
-        }
-        let ggml_type = cursor.read_u32(path)?;
-        let relative_offset = cursor.read_u64(path)? as usize;
-        let n_elements = dims
-            .iter()
-            .try_fold(1usize, |acc, &dim| acc.checked_mul(dim))
-            .ok_or_else(|| HybridError::ModelLoad {
-                path: path.to_owned(),
-                reason: format!("tensor '{name}' element count overflow"),
-            })?;
-        tensors.insert(
-            name,
-            GgufTensorInfo {
-                dims,
-                ggml_type,
-                relative_offset,
-                absolute_offset: 0,
-                n_elements,
-            },
-        );
+        "general.architecture" => Ok(*architecture = cursor.read_string(path)?),
+        _ => read_unknown(cursor, path, key, value_type, numerics),
     }
+}
 
-    let tensor_data_offset = dequant::align_up(cursor.offset, alignment);
-    for tensor in tensors.values_mut() {
-        tensor.absolute_offset = tensor_data_offset + tensor.relative_offset;
+fn read_unknown(
+    cursor: &mut GgufCursor,
+    path: &str,
+    key: String,
+    value_type: u32,
+    numerics: &mut HashMap<String, u64>,
+) -> Result<()> {
+    if let Some(value) = cursor.read_numeric_value(value_type, path)? {
+        numerics.insert(key, value);
+    } else if value_type == GGUF_VALUE_TYPE_STRING {
+        cursor.read_string(path)?;
+    } else {
+        cursor.skip_value(value_type, path)?;
     }
+    Ok(())
+}
 
-    Ok(ParsedCheckpointLayout {
-        metadata: GgufMetadata {
-            architecture: strings
-                .get("general.architecture")
-                .cloned()
-                .unwrap_or_else(|| "unknown".into()),
-            quantization: dequant::quantization_label(file_type),
-            strings,
-            numerics,
+fn read_tensor_info(cursor: &mut GgufCursor, path: &str) -> Result<(String, GgufTensorInfo)> {
+    let name = cursor.read_string(path)?;
+    let n_dims_raw = cursor.read_u32(path)? as usize;
+    if n_dims_raw > 8 {
+        return Err(HybridError::UnsupportedFormat(format!(
+            "tensor '{name}' has {n_dims_raw} dims, which exceeds maximum allowed 8"
+        )));
+    }
+    let mut dims = Vec::with_capacity(n_dims_raw);
+    for _ in 0..n_dims_raw {
+        dims.push(cursor.read_u64(path)? as usize);
+    }
+    let ggml_type = cursor.read_u32(path)?;
+    let relative_offset = cursor.read_u64(path)? as usize;
+    let n_elements = dims
+        .iter()
+        .try_fold(1usize, |acc, &dim| acc.checked_mul(dim))
+        .ok_or_else(|| HybridError::ModelLoad {
+            path: path.to_owned(),
+            reason: format!("tensor '{name}' element count overflow"),
+        })?;
+    Ok((
+        name,
+        GgufTensorInfo {
+            dims,
+            ggml_type,
+            relative_offset,
+            absolute_offset: 0,
+            n_elements,
         },
-        tensors,
-    })
+    ))
 }
 
 impl MappedGgufCheckpoint {
@@ -345,7 +340,7 @@ impl MappedGgufCheckpoint {
         Ok(unsafe { slice::from_raw_parts(ptr, info.n_elements) })
     }
 
-    fn u16_tensor_values(
+    pub(super) fn u16_tensor_values(
         &self,
         info: &GgufTensorInfo,
         path: &str,
@@ -381,24 +376,15 @@ impl MappedGgufCheckpoint {
         }
 
         let row_size = dequant::tensor_row_size(info.ggml_type, info.dims[0])?;
-        let start =
-            info.absolute_offset
-                .checked_add(row_idx.checked_mul(row_size).ok_or_else(|| {
-                    HybridError::ModelLoad {
-                        path: path.to_owned(),
-                        reason: format!("tensor '{tensor_name}' row offset overflow"),
-                    }
-                })?)
-                .ok_or_else(|| HybridError::ModelLoad {
-                    path: path.to_owned(),
-                    reason: format!("tensor '{tensor_name}' row offset overflow"),
-                })?;
-        let end = start
-            .checked_add(row_size)
-            .ok_or_else(|| HybridError::ModelLoad {
-                path: path.to_owned(),
-                reason: format!("tensor '{tensor_name}' row offset overflow"),
-            })?;
+        let overflow = || HybridError::ModelLoad {
+            path: path.to_owned(),
+            reason: format!("tensor '{tensor_name}' row offset overflow"),
+        };
+        let start = info
+            .absolute_offset
+            .checked_add(row_idx.checked_mul(row_size).ok_or_else(overflow)?)
+            .ok_or_else(overflow)?;
+        let end = start.checked_add(row_size).ok_or_else(overflow)?;
         if end > self.mmap.len() {
             return Err(HybridError::ModelLoad {
                 path: path.to_owned(),
@@ -408,19 +394,6 @@ impl MappedGgufCheckpoint {
         Ok(&self.mmap[start..end])
     }
 
-    /// Pure-CPU F16 tensor access. Returns an owned `Vec<u16>` of the
-    /// tensor's raw 16-bit values (no GPU pin-registration).
-    #[allow(dead_code)]
-    pub(super) fn f16_tensor_values(&self, name: &str, path: &str) -> Result<Vec<u16>> {
-        let info = self.tensor_info(name, path)?.clone();
-        if info.ggml_type != GGML_TYPE_F16 {
-            return Err(HybridError::UnsupportedFormat(format!(
-                "tensor '{name}' must be F16, got ggml_type={}",
-                info.ggml_type
-            )));
-        }
-        self.u16_tensor_values(&info, path, name)
-    }
 }
 
 impl<'a> GgufCursor<'a> {
@@ -470,18 +443,6 @@ impl<'a> GgufCursor<'a> {
         ))
     }
 
-    fn read_i16(&mut self, path: &str) -> Result<i16> {
-        Ok(self.read_u16(path)? as i16)
-    }
-
-    fn read_i32(&mut self, path: &str) -> Result<i32> {
-        Ok(self.read_u32(path)? as i32)
-    }
-
-    fn read_i64(&mut self, path: &str) -> Result<i64> {
-        Ok(self.read_u64(path)? as i64)
-    }
-
     fn read_string(&mut self, path: &str) -> Result<String> {
         let len = self.read_u64(path)? as usize;
         let bytes = self.read_exact(len, path)?;
@@ -493,48 +454,72 @@ impl<'a> GgufCursor<'a> {
 
     fn read_numeric_as_u32(&mut self, value_type: u32, path: &str) -> Result<u32> {
         match value_type {
-            GGUF_VALUE_TYPE_UINT8 => Ok(self.read_u8(path)? as u32),
-            GGUF_VALUE_TYPE_INT8 => Ok(self.read_u8(path)? as i8 as i32 as u32),
-            GGUF_VALUE_TYPE_UINT16 => Ok(self.read_u16(path)? as u32),
-            GGUF_VALUE_TYPE_INT16 => Ok(self.read_i16(path)? as i32 as u32),
-            GGUF_VALUE_TYPE_UINT32 => self.read_u32(path),
-            GGUF_VALUE_TYPE_INT32 => Ok(self.read_i32(path)? as u32),
-            GGUF_VALUE_TYPE_UINT64 => Ok(self.read_u64(path)? as u32),
-            GGUF_VALUE_TYPE_INT64 => Ok(self.read_i64(path)? as u32),
+            GGUF_VALUE_TYPE_UINT8
+            | GGUF_VALUE_TYPE_UINT16
+            | GGUF_VALUE_TYPE_UINT32
+            | GGUF_VALUE_TYPE_UINT64 => Ok(self.read_unsigned_value(value_type, path)? as u32),
+            GGUF_VALUE_TYPE_INT8
+            | GGUF_VALUE_TYPE_INT16
+            | GGUF_VALUE_TYPE_INT32
+            | GGUF_VALUE_TYPE_INT64 => Ok(self.read_signed_value(value_type, path)? as u32),
             _ => Err(HybridError::UnsupportedFormat(format!(
                 "GGUF numeric conversion from type {value_type} is not supported"
             ))),
         }
     }
 
-    fn read_numeric_as_usize(&mut self, value_type: u32, path: &str) -> Result<usize> {
-        Ok(self.read_numeric_as_u32(value_type, path)? as usize)
+    fn read_numeric_value(&mut self, value_type: u32, path: &str) -> Result<Option<u64>> {
+        match value_type {
+            GGUF_VALUE_TYPE_STRING | GGUF_VALUE_TYPE_ARRAY => Ok(None),
+            GGUF_VALUE_TYPE_UINT8
+            | GGUF_VALUE_TYPE_UINT16
+            | GGUF_VALUE_TYPE_UINT32
+            | GGUF_VALUE_TYPE_UINT64 => Ok(Some(self.read_unsigned_value(value_type, path)?)),
+            GGUF_VALUE_TYPE_INT8
+            | GGUF_VALUE_TYPE_INT16
+            | GGUF_VALUE_TYPE_INT32
+            | GGUF_VALUE_TYPE_INT64 => Ok(Some(self.read_signed_value(value_type, path)?)),
+            GGUF_VALUE_TYPE_BOOL => Ok(Some(self.read_u8(path)? as u64)),
+            GGUF_VALUE_TYPE_FLOAT32 => Ok(Some(self.read_u32(path)? as u64)),
+            GGUF_VALUE_TYPE_FLOAT64 => Ok(Some(self.read_u64(path)?)),
+            other => Err(HybridError::UnsupportedFormat(format!(
+                "unsupported GGUF value type {other}"
+            ))),
+        }
     }
 
-    fn read_numeric_value(&mut self, value_type: u32, path: &str) -> Result<Option<u64>> {
-        let value = match value_type {
-            GGUF_VALUE_TYPE_UINT8 => Some(self.read_u8(path)? as u64),
-            GGUF_VALUE_TYPE_INT8 => Some(self.read_u8(path)? as i8 as i64 as u64),
-            GGUF_VALUE_TYPE_UINT16 => Some(self.read_u16(path)? as u64),
-            GGUF_VALUE_TYPE_INT16 => Some(self.read_i16(path)? as i64 as u64),
-            GGUF_VALUE_TYPE_UINT32 => Some(self.read_u32(path)? as u64),
-            GGUF_VALUE_TYPE_INT32 => Some(self.read_i32(path)? as i64 as u64),
-            GGUF_VALUE_TYPE_UINT64 => Some(self.read_u64(path)?),
-            GGUF_VALUE_TYPE_INT64 => Some(self.read_i64(path)? as u64),
-            GGUF_VALUE_TYPE_BOOL => Some(self.read_u8(path)? as u64),
-            GGUF_VALUE_TYPE_FLOAT32 => Some(self.read_u32(path)? as u64),
-            GGUF_VALUE_TYPE_FLOAT64 => Some(self.read_u64(path)?),
-            GGUF_VALUE_TYPE_STRING | GGUF_VALUE_TYPE_ARRAY => None,
-            other => {
-                return Err(HybridError::UnsupportedFormat(format!(
-                    "unsupported GGUF value type {other}"
-                )));
-            }
-        };
-        Ok(value)
+    fn read_unsigned_value(&mut self, value_type: u32, path: &str) -> Result<u64> {
+        match value_type {
+            GGUF_VALUE_TYPE_UINT8 => Ok(self.read_u8(path)? as u64),
+            GGUF_VALUE_TYPE_UINT16 => Ok(self.read_u16(path)? as u64),
+            GGUF_VALUE_TYPE_UINT32 => Ok(self.read_u32(path)? as u64),
+            GGUF_VALUE_TYPE_UINT64 => Ok(self.read_u64(path)?),
+            _ => unreachable!(),
+        }
+    }
+
+    fn read_signed_value(&mut self, value_type: u32, path: &str) -> Result<u64> {
+        match value_type {
+            GGUF_VALUE_TYPE_INT8 => Ok(self.read_u8(path)? as i8 as i64 as u64),
+            GGUF_VALUE_TYPE_INT16 => Ok(self.read_u16(path)? as i16 as i64 as u64),
+            GGUF_VALUE_TYPE_INT32 => Ok(self.read_u32(path)? as i32 as i64 as u64),
+            GGUF_VALUE_TYPE_INT64 => Ok(self.read_u64(path)? as i64 as u64),
+            _ => unreachable!(),
+        }
     }
 
     fn skip_value(&mut self, value_type: u32, path: &str) -> Result<()> {
+        match value_type {
+            GGUF_VALUE_TYPE_STRING => {
+                self.read_string(path)?;
+            }
+            GGUF_VALUE_TYPE_ARRAY => self.skip_array(path)?,
+            _ => self.skip_fixed_value(value_type, path)?,
+        }
+        Ok(())
+    }
+
+    fn skip_fixed_value(&mut self, value_type: u32, path: &str) -> Result<()> {
         match value_type {
             GGUF_VALUE_TYPE_UINT8 | GGUF_VALUE_TYPE_INT8 | GGUF_VALUE_TYPE_BOOL => {
                 self.read_exact(1, path)?;
@@ -548,21 +533,20 @@ impl<'a> GgufCursor<'a> {
             GGUF_VALUE_TYPE_UINT64 | GGUF_VALUE_TYPE_INT64 | GGUF_VALUE_TYPE_FLOAT64 => {
                 self.read_exact(8, path)?;
             }
-            GGUF_VALUE_TYPE_STRING => {
-                let _ = self.read_string(path)?;
-            }
-            GGUF_VALUE_TYPE_ARRAY => {
-                let nested_type = self.read_u32(path)?;
-                let len = self.read_u64(path)? as usize;
-                for _ in 0..len {
-                    self.skip_value(nested_type, path)?;
-                }
-            }
-            _ => {
+            other => {
                 return Err(HybridError::UnsupportedFormat(format!(
-                    "unsupported GGUF value type {value_type}"
+                    "unsupported GGUF value type {other}"
                 )));
             }
+        }
+        Ok(())
+    }
+
+    fn skip_array(&mut self, path: &str) -> Result<()> {
+        let nested_type = self.read_u32(path)?;
+        let len = self.read_u64(path)? as usize;
+        for _ in 0..len {
+            self.skip_value(nested_type, path)?;
         }
         Ok(())
     }

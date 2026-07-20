@@ -46,7 +46,7 @@ pub(super) fn resolve_adapter(
     family_override: Option<ModelFamily>,
     path: &str,
 ) -> Result<ModelAdapter> {
-    let architecture = metadata.architecture().to_owned();
+    let architecture = metadata.architecture.clone();
     let family = infer_family(&architecture, family_override, path)?;
     let hidden_size = metadata
         .numeric(&format!("{architecture}.embedding_length"))
@@ -148,7 +148,7 @@ pub(super) fn resolve_adapter(
         preferred_gpu_synapse_tensor,
         synapse_source,
         real_gpu_synapse_tensor,
-        quantization: metadata.quantization().to_owned(),
+        quantization: metadata.quantization.clone(),
     })
 }
 
