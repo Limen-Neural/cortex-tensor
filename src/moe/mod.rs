@@ -28,6 +28,9 @@ mod dequant;
 mod gguf;
 mod routing;
 
+#[cfg(test)]
+pub(crate) mod test_fixtures;
+
 use self::adapter::{ModelAdapter, resolve_adapter};
 use self::checkpoint::{MappedGgufCheckpoint, probe_and_map_checkpoint};
 use self::routing::{

@@ -36,6 +36,7 @@ pub(super) struct GgufTensorInfo {
     pub(super) n_elements: usize,
 }
 
+#[derive(Debug)]
 pub(super) struct ParsedCheckpointLayout {
     pub(super) metadata: GgufMetadata,
     pub(super) tensors: HashMap<String, GgufTensorInfo>,
@@ -615,5 +616,332 @@ impl<'a> GgufCursor<'a> {
             self.skip_value(nested_type, path)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::HybridError;
+    use crate::moe::test_fixtures::*;
+    use crate::moe::*;
+    use crate::types::EMBEDDING_DIM;
+
+    #[test]
+    fn parse_checkpoint_layout_reads_signed_and_misc_value_types() {
+        let mut out = Vec::new();
+        out.extend_from_slice(&GGUF_MAGIC);
+        push_u32(&mut out, GGUF_VERSION);
+        push_u64(&mut out, 0);
+        push_u64(&mut out, 15);
+        push_kv_raw(
+            &mut out,
+            "general.alignment",
+            GGUF_VALUE_TYPE_UINT16,
+            &32u16.to_le_bytes(),
+        );
+        push_kv_i8(&mut out, "general.file_type", 1);
+        push_kv_string(&mut out, "general.architecture", "olmoe");
+        push_kv_raw(
+            &mut out,
+            "custom.u8",
+            GGUF_VALUE_TYPE_UINT8,
+            &7u8.to_le_bytes(),
+        );
+        push_kv_raw(
+            &mut out,
+            "custom.u16",
+            GGUF_VALUE_TYPE_UINT16,
+            &1234u16.to_le_bytes(),
+        );
+        push_kv_raw(
+            &mut out,
+            "custom.u64",
+            GGUF_VALUE_TYPE_UINT64,
+            &42u64.to_le_bytes(),
+        );
+        push_kv_i8(&mut out, "custom.i8", 5);
+        push_kv_i16(&mut out, "custom.i16", 1000);
+        push_kv_i32(&mut out, "custom.i32", 50000);
+        push_kv_i64(&mut out, "custom.i64", 1_000_000);
+        push_kv_bool(&mut out, "custom.bool", true);
+        push_kv_f32(&mut out, "custom.float32", 1.5);
+        push_kv_f64(&mut out, "custom.float64", 2.5);
+        push_kv_string(&mut out, "custom.string", "hello");
+        push_kv_array_u32(&mut out, "custom.array", &[1, 2]);
+
+        let parsed = parse_checkpoint_layout(&out, "test").unwrap();
+        assert_eq!(parsed.metadata.architecture, "olmoe");
+        assert!(parsed.tensors.is_empty());
+        assert_eq!(parsed.metadata.numeric("custom.u8"), Some(7));
+        assert_eq!(parsed.metadata.numeric("custom.u16"), Some(1234));
+        assert_eq!(parsed.metadata.numeric("custom.u64"), Some(42));
+        assert_eq!(parsed.metadata.numeric("custom.i8"), Some(5));
+        assert_eq!(parsed.metadata.numeric("custom.i16"), Some(1000));
+        assert_eq!(parsed.metadata.numeric("custom.i32"), Some(50000));
+        assert_eq!(parsed.metadata.numeric("custom.i64"), Some(1_000_000));
+        assert_eq!(parsed.metadata.numeric("custom.bool"), Some(1));
+        assert!(parsed.metadata.numeric("custom.string").is_none());
+        assert!(parsed.metadata.numeric("custom.array").is_none());
+    }
+
+    #[test]
+    fn parse_checkpoint_layout_rejects_bad_magic() {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"GGUS");
+        push_u32(&mut out, GGUF_VERSION);
+        push_u64(&mut out, 0);
+        push_u64(&mut out, 0);
+        let err = parse_checkpoint_layout(&out, "test").unwrap_err();
+        assert!(err.to_string().contains("unrecognised model magic bytes"));
+    }
+
+    #[test]
+    fn parse_checkpoint_layout_rejects_bad_version() {
+        let mut out = Vec::new();
+        out.extend_from_slice(&GGUF_MAGIC);
+        push_u32(&mut out, 2);
+        push_u64(&mut out, 0);
+        push_u64(&mut out, 0);
+        let err = parse_checkpoint_layout(&out, "test").unwrap_err();
+        assert!(err.to_string().contains("unsupported GGUF version"));
+    }
+
+    #[test]
+    fn parse_checkpoint_layout_rejects_excessive_tensor_count() {
+        let mut out = Vec::new();
+        out.extend_from_slice(&GGUF_MAGIC);
+        push_u32(&mut out, GGUF_VERSION);
+        push_u64(&mut out, 100_001);
+        push_u64(&mut out, 0);
+        let err = parse_checkpoint_layout(&out, "test").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("tensor_count 100001 exceeds maximum allowed 100000")
+        );
+    }
+
+    #[test]
+    fn parse_checkpoint_layout_rejects_excessive_kv_count() {
+        let mut out = Vec::new();
+        out.extend_from_slice(&GGUF_MAGIC);
+        push_u32(&mut out, GGUF_VERSION);
+        push_u64(&mut out, 0);
+        push_u64(&mut out, 100_001);
+        let err = parse_checkpoint_layout(&out, "test").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("kv_count 100001 exceeds maximum allowed 100000")
+        );
+    }
+
+    #[test]
+    fn parse_checkpoint_layout_rejects_alignment_overflow() {
+        let mut out = Vec::new();
+        out.extend_from_slice(&GGUF_MAGIC);
+        push_u32(&mut out, GGUF_VERSION);
+        push_u64(&mut out, 0);
+        push_u64(&mut out, 1);
+        push_kv_raw(
+            &mut out,
+            "general.alignment",
+            GGUF_VALUE_TYPE_UINT64,
+            &u64::MAX.to_le_bytes(),
+        );
+        let err = parse_checkpoint_layout(&out, "test").unwrap_err();
+        assert!(err.to_string().contains("out of range for u32"));
+    }
+
+    #[test]
+    fn parse_checkpoint_layout_rejects_negative_alignment() {
+        let mut out = Vec::new();
+        out.extend_from_slice(&GGUF_MAGIC);
+        push_u32(&mut out, GGUF_VERSION);
+        push_u64(&mut out, 0);
+        push_u64(&mut out, 1);
+        push_kv_i32(&mut out, "general.alignment", -1);
+        let err = parse_checkpoint_layout(&out, "test").unwrap_err();
+        assert!(err.to_string().contains("out of range for u32"));
+    }
+
+    #[test]
+    fn parse_checkpoint_layout_rejects_negative_unknown_numeric() {
+        let mut out = Vec::new();
+        out.extend_from_slice(&GGUF_MAGIC);
+        push_u32(&mut out, GGUF_VERSION);
+        push_u64(&mut out, 0);
+        push_u64(&mut out, 1);
+        push_kv_i32(&mut out, "custom.negative", -1);
+        let err = parse_checkpoint_layout(&out, "test").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("cannot be represented as unsigned metadata")
+        );
+    }
+
+    #[test]
+    fn parse_checkpoint_layout_rejects_unsupported_value_type() {
+        let mut out = Vec::new();
+        out.extend_from_slice(&GGUF_MAGIC);
+        push_u32(&mut out, GGUF_VERSION);
+        push_u64(&mut out, 0);
+        push_u64(&mut out, 1);
+        push_kv_raw(&mut out, "custom.bad", 99, &[]);
+        let err = parse_checkpoint_layout(&out, "test").unwrap_err();
+        assert!(err.to_string().contains("unsupported GGUF value type 99"));
+    }
+
+    #[test]
+    fn parse_checkpoint_layout_rejects_too_many_tensor_dims() {
+        let mut out = Vec::new();
+        out.extend_from_slice(&GGUF_MAGIC);
+        push_u32(&mut out, GGUF_VERSION);
+        push_u64(&mut out, 1);
+        push_u64(&mut out, 0);
+        push_string(&mut out, "t");
+        push_u32(&mut out, 9);
+        for _ in 0..9 {
+            push_u64(&mut out, 1);
+        }
+        push_u32(&mut out, GGML_TYPE_F32);
+        push_u64(&mut out, 0);
+        let err = parse_checkpoint_layout(&out, "test").unwrap_err();
+        assert!(err.to_string().contains("exceeds maximum allowed 8"));
+    }
+
+    #[test]
+    fn parse_checkpoint_layout_rejects_tensor_element_overflow() {
+        let mut out = Vec::new();
+        out.extend_from_slice(&GGUF_MAGIC);
+        push_u32(&mut out, GGUF_VERSION);
+        push_u64(&mut out, 1);
+        push_u64(&mut out, 0);
+        push_string(&mut out, "t");
+        push_u32(&mut out, 2);
+        push_u64(&mut out, usize::MAX as u64);
+        push_u64(&mut out, 2);
+        push_u32(&mut out, GGML_TYPE_F32);
+        push_u64(&mut out, 0);
+        let err = parse_checkpoint_layout(&out, "test").unwrap_err();
+        assert!(err.to_string().contains("element count overflow"));
+    }
+
+    fn build_token_file(ggml_type: u32, d1: usize, payload: Vec<u8>) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&GGUF_MAGIC);
+        push_u32(&mut out, GGUF_VERSION);
+        push_u64(&mut out, 1);
+        push_u64(&mut out, 0);
+        push_string(&mut out, "token_embd.weight");
+        push_u32(&mut out, 2);
+        push_u64(&mut out, EMBEDDING_DIM as u64);
+        push_u64(&mut out, d1 as u64);
+        push_u32(&mut out, ggml_type);
+        push_u64(&mut out, 0);
+        while out.len() % 32 != 0 {
+            out.push(0);
+        }
+        out.extend_from_slice(&payload);
+        out
+    }
+
+    #[test]
+    fn probe_and_map_extracts_f32_token_embedding() {
+        let d1 = 3usize;
+        let payload = vec![0u8; EMBEDDING_DIM * d1 * std::mem::size_of::<f32>()];
+        let bytes = build_token_file(GGML_TYPE_F32, d1, payload);
+        let path = write_temp_file(&bytes, "token_f32");
+        let (_, mut checkpoint) = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
+
+        assert!(checkpoint.has_tensor("token_embd.weight"));
+        assert_eq!(
+            checkpoint.find_first_tensor_with_suffix("embd.weight"),
+            Some("token_embd.weight")
+        );
+        assert!(
+            checkpoint
+                .find_first_tensor_with_suffix("missing")
+                .is_none()
+        );
+
+        let info = checkpoint
+            .tensor_info("token_embd.weight", path.to_str().unwrap())
+            .unwrap();
+        assert_eq!(info.dims, vec![EMBEDDING_DIM, d1]);
+        assert_eq!(info.ggml_type, GGML_TYPE_F32);
+
+        let weights = checkpoint
+            .f32_tensor("token_embd.weight", path.to_str().unwrap())
+            .unwrap();
+        assert_eq!(weights.len(), EMBEDDING_DIM * d1);
+
+        let embedding = checkpoint
+            .extract_token_embedding("token_embd.weight", path.to_str().unwrap(), 0)
+            .unwrap();
+        assert_eq!(embedding.len(), EMBEDDING_DIM);
+        assert!(embedding.iter().all(|&v| v == 0.0));
+
+        let err = checkpoint
+            .extract_token_embedding("token_embd.weight", path.to_str().unwrap(), d1)
+            .unwrap_err();
+        assert!(
+            matches!(err, HybridError::InputLengthMismatch { expected, got } if expected == d1 && got == d1)
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn probe_and_map_extracts_f16_token_embedding() {
+        let d1 = 3usize;
+        let payload = vec![0u8; EMBEDDING_DIM * d1 * 2];
+        let bytes = build_token_file(GGML_TYPE_F16, d1, payload);
+        let path = write_temp_file(&bytes, "token_f16");
+        let (_, mut checkpoint) = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
+
+        let info = checkpoint
+            .tensor_info("token_embd.weight", path.to_str().unwrap())
+            .unwrap()
+            .clone();
+        assert_eq!(info.ggml_type, GGML_TYPE_F16);
+
+        let err = checkpoint
+            .f32_tensor("token_embd.weight", path.to_str().unwrap())
+            .unwrap_err();
+        assert!(err.to_string().contains("must be F32"));
+
+        let values = checkpoint
+            .u16_tensor_values(&info, path.to_str().unwrap(), "token_embd.weight")
+            .unwrap();
+        assert_eq!(values.len(), EMBEDDING_DIM * d1);
+
+        let embedding = checkpoint
+            .extract_token_embedding("token_embd.weight", path.to_str().unwrap(), 1)
+            .unwrap();
+        assert_eq!(embedding.len(), EMBEDDING_DIM);
+        assert!(embedding.iter().all(|&v| v == 0.0));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn extract_token_embedding_rejects_unsupported_ggml_type() {
+        let bytes = build_token_file(GGML_TYPE_IQ3_S, 2, vec![]);
+        let path = write_temp_file(&bytes, "token_iq3");
+        let (_, mut checkpoint) = probe_and_map_checkpoint(path.to_str().unwrap()).unwrap();
+
+        let err = checkpoint
+            .extract_token_embedding("token_embd.weight", path.to_str().unwrap(), 0)
+            .unwrap_err();
+        assert!(err.to_string().contains("IQ3_S token embeddings"));
+
+        let err = checkpoint
+            .extract_token_embedding("token_embd.weight", path.to_str().unwrap(), 5)
+            .unwrap_err();
+        assert!(
+            matches!(err, HybridError::InputLengthMismatch { expected, got } if expected == 2 && got == 5)
+        );
+
+        let _ = std::fs::remove_file(path);
     }
 }
