@@ -241,7 +241,9 @@ impl OlmoeRouter {
                 path: self.model_path.clone(),
                 reason: "checkpoint not loaded".into(),
             })?;
-        let info = checkpoint.tensor_info(tensor_name, &self.model_path)?.clone();
+        let info = checkpoint
+            .tensor_info(tensor_name, &self.model_path)?
+            .clone();
         if info.ggml_type != GGML_TYPE_F16 {
             return Err(HybridError::UnsupportedFormat(format!(
                 "tensor '{tensor_name}' must be F16, got ggml_type={}",

@@ -53,7 +53,6 @@ struct GgufCursor<'a> {
     offset: usize,
 }
 
-
 impl GgufMetadata {
     pub(super) fn numeric(&self, key: &str) -> Option<usize> {
         self.numerics.get(key).copied().map(|v| v as usize)
@@ -206,7 +205,14 @@ fn read_metadata_kv(
     let mut file_type = None;
     let mut numerics = HashMap::new();
     for _ in 0..kv_count {
-        read_one_kv(cursor, path, &mut alignment, &mut file_type, architecture, &mut numerics)?;
+        read_one_kv(
+            cursor,
+            path,
+            &mut alignment,
+            &mut file_type,
+            architecture,
+            &mut numerics,
+        )?;
     }
     Ok((alignment, file_type, numerics))
 }
@@ -222,14 +228,20 @@ fn read_one_kv(
     let key = cursor.read_string(path)?;
     let value_type = cursor.read_u32(path)?;
     match key.as_str() {
-        "general.alignment" => Ok(*alignment = cursor.read_numeric_as_u32(value_type, path)? as usize),
+        "general.alignment" => {
+            *alignment = cursor.read_numeric_as_u32(value_type, path)? as usize;
+            Ok(())
+        }
         "general.file_type" => {
             let value = cursor.read_numeric_as_u32(value_type, path)?;
             *file_type = Some(value);
             numerics.insert("general.file_type".into(), value as u64);
             Ok(())
         }
-        "general.architecture" => Ok(*architecture = cursor.read_string(path)?),
+        "general.architecture" => {
+            *architecture = cursor.read_string(path)?;
+            Ok(())
+        }
         _ => read_unknown(cursor, path, key, value_type, numerics),
     }
 }
@@ -393,7 +405,6 @@ impl MappedGgufCheckpoint {
         }
         Ok(&self.mmap[start..end])
     }
-
 }
 
 impl<'a> GgufCursor<'a> {
@@ -443,6 +454,30 @@ impl<'a> GgufCursor<'a> {
         ))
     }
 
+    fn read_i8(&mut self, path: &str) -> Result<i8> {
+        let bytes = self.read_exact(1, path)?;
+        Ok(i8::from_le_bytes([bytes[0]]))
+    }
+
+    fn read_i16(&mut self, path: &str) -> Result<i16> {
+        let bytes = self.read_exact(2, path)?;
+        Ok(i16::from_le_bytes([bytes[0], bytes[1]]))
+    }
+
+    fn read_i32(&mut self, path: &str) -> Result<i32> {
+        let bytes = self.read_exact(4, path)?;
+        Ok(i32::from_le_bytes(
+            bytes.try_into().expect("slice length is fixed"),
+        ))
+    }
+
+    fn read_i64(&mut self, path: &str) -> Result<i64> {
+        let bytes = self.read_exact(8, path)?;
+        Ok(i64::from_le_bytes(
+            bytes.try_into().expect("slice length is fixed"),
+        ))
+    }
+
     fn read_string(&mut self, path: &str) -> Result<String> {
         let len = self.read_u64(path)? as usize;
         let bytes = self.read_exact(len, path)?;
@@ -457,11 +492,25 @@ impl<'a> GgufCursor<'a> {
             GGUF_VALUE_TYPE_UINT8
             | GGUF_VALUE_TYPE_UINT16
             | GGUF_VALUE_TYPE_UINT32
-            | GGUF_VALUE_TYPE_UINT64 => Ok(self.read_unsigned_value(value_type, path)? as u32),
+            | GGUF_VALUE_TYPE_UINT64 => {
+                let value = self.read_unsigned_value(value_type, path)?;
+                u32::try_from(value).map_err(|_| {
+                    HybridError::UnsupportedFormat(format!(
+                        "GGUF unsigned value {value} out of range for u32"
+                    ))
+                })
+            }
             GGUF_VALUE_TYPE_INT8
             | GGUF_VALUE_TYPE_INT16
             | GGUF_VALUE_TYPE_INT32
-            | GGUF_VALUE_TYPE_INT64 => Ok(self.read_signed_value(value_type, path)? as u32),
+            | GGUF_VALUE_TYPE_INT64 => {
+                let value = self.read_signed_value(value_type, path)?;
+                u32::try_from(value).map_err(|_| {
+                    HybridError::UnsupportedFormat(format!(
+                        "GGUF signed value {value} out of range for u32"
+                    ))
+                })
+            }
             _ => Err(HybridError::UnsupportedFormat(format!(
                 "GGUF numeric conversion from type {value_type} is not supported"
             ))),
@@ -478,7 +527,15 @@ impl<'a> GgufCursor<'a> {
             GGUF_VALUE_TYPE_INT8
             | GGUF_VALUE_TYPE_INT16
             | GGUF_VALUE_TYPE_INT32
-            | GGUF_VALUE_TYPE_INT64 => Ok(Some(self.read_signed_value(value_type, path)?)),
+            | GGUF_VALUE_TYPE_INT64 => {
+                let value = self.read_signed_value(value_type, path)?;
+                let unsigned = u64::try_from(value).map_err(|_| {
+                    HybridError::UnsupportedFormat(format!(
+                        "GGUF signed value {value} cannot be represented as unsigned metadata"
+                    ))
+                })?;
+                Ok(Some(unsigned))
+            }
             GGUF_VALUE_TYPE_BOOL => Ok(Some(self.read_u8(path)? as u64)),
             GGUF_VALUE_TYPE_FLOAT32 => Ok(Some(self.read_u32(path)? as u64)),
             GGUF_VALUE_TYPE_FLOAT64 => Ok(Some(self.read_u64(path)?)),
@@ -498,12 +555,12 @@ impl<'a> GgufCursor<'a> {
         }
     }
 
-    fn read_signed_value(&mut self, value_type: u32, path: &str) -> Result<u64> {
+    fn read_signed_value(&mut self, value_type: u32, path: &str) -> Result<i64> {
         match value_type {
-            GGUF_VALUE_TYPE_INT8 => Ok(self.read_u8(path)? as i8 as i64 as u64),
-            GGUF_VALUE_TYPE_INT16 => Ok(self.read_u16(path)? as i16 as i64 as u64),
-            GGUF_VALUE_TYPE_INT32 => Ok(self.read_u32(path)? as i32 as i64 as u64),
-            GGUF_VALUE_TYPE_INT64 => Ok(self.read_u64(path)? as i64 as u64),
+            GGUF_VALUE_TYPE_INT8 => Ok(i64::from(self.read_i8(path)?)),
+            GGUF_VALUE_TYPE_INT16 => Ok(i64::from(self.read_i16(path)?)),
+            GGUF_VALUE_TYPE_INT32 => Ok(i64::from(self.read_i32(path)?)),
+            GGUF_VALUE_TYPE_INT64 => Ok(self.read_i64(path)?),
             _ => unreachable!(),
         }
     }
