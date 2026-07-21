@@ -180,19 +180,19 @@ fn parse_header(cursor: &mut GgufCursor, path: &str) -> Result<(usize, usize)> {
             "unsupported GGUF version {version}; expected {GGUF_VERSION}"
         )));
     }
-    let tensor_count_raw = cursor.read_u64(path)?;
-    if tensor_count_raw > 100_000u64 {
+    let tensor_count = read_limited_count(cursor, path, "tensor_count")?;
+    let kv_count = read_limited_count(cursor, path, "kv_count")?;
+    Ok((tensor_count, kv_count))
+}
+
+fn read_limited_count(cursor: &mut GgufCursor, path: &str, label: &str) -> Result<usize> {
+    let raw = cursor.read_u64(path)?;
+    if raw > 100_000u64 {
         return Err(HybridError::UnsupportedFormat(format!(
-            "tensor_count {tensor_count_raw} exceeds maximum allowed 100000"
+            "{label} {raw} exceeds maximum allowed 100000"
         )));
     }
-    let kv_count_raw = cursor.read_u64(path)?;
-    if kv_count_raw > 100_000u64 {
-        return Err(HybridError::UnsupportedFormat(format!(
-            "kv_count {kv_count_raw} exceeds maximum allowed 100000"
-        )));
-    }
-    Ok((tensor_count_raw as usize, kv_count_raw as usize))
+    Ok(raw as usize)
 }
 
 fn read_metadata_kv(
@@ -265,25 +265,9 @@ fn read_unknown(
 
 fn read_tensor_info(cursor: &mut GgufCursor, path: &str) -> Result<(String, GgufTensorInfo)> {
     let name = cursor.read_string(path)?;
-    let n_dims_raw = cursor.read_u32(path)? as usize;
-    if n_dims_raw > 8 {
-        return Err(HybridError::UnsupportedFormat(format!(
-            "tensor '{name}' has {n_dims_raw} dims, which exceeds maximum allowed 8"
-        )));
-    }
-    let mut dims = Vec::with_capacity(n_dims_raw);
-    for _ in 0..n_dims_raw {
-        dims.push(cursor.read_u64(path)? as usize);
-    }
+    let (dims, n_elements) = read_tensor_dimensions(cursor, path, &name)?;
     let ggml_type = cursor.read_u32(path)?;
     let relative_offset = cursor.read_u64(path)? as usize;
-    let n_elements = dims
-        .iter()
-        .try_fold(1usize, |acc, &dim| acc.checked_mul(dim))
-        .ok_or_else(|| HybridError::ModelLoad {
-            path: path.to_owned(),
-            reason: format!("tensor '{name}' element count overflow"),
-        })?;
     Ok((
         name,
         GgufTensorInfo {
@@ -294,6 +278,31 @@ fn read_tensor_info(cursor: &mut GgufCursor, path: &str) -> Result<(String, Gguf
             n_elements,
         },
     ))
+}
+
+fn read_tensor_dimensions(
+    cursor: &mut GgufCursor,
+    path: &str,
+    name: &str,
+) -> Result<(Vec<usize>, usize)> {
+    let n_dims_raw = cursor.read_u32(path)? as usize;
+    if n_dims_raw > 8 {
+        return Err(HybridError::UnsupportedFormat(format!(
+            "tensor '{name}' has {n_dims_raw} dims, which exceeds maximum allowed 8"
+        )));
+    }
+    let mut dims = Vec::with_capacity(n_dims_raw);
+    for _ in 0..n_dims_raw {
+        dims.push(cursor.read_u64(path)? as usize);
+    }
+    let n_elements = dims
+        .iter()
+        .try_fold(1usize, |acc, &dim| acc.checked_mul(dim))
+        .ok_or_else(|| HybridError::ModelLoad {
+            path: path.to_owned(),
+            reason: format!("tensor '{name}' element count overflow"),
+        })?;
+    Ok((dims, n_elements))
 }
 
 impl MappedGgufCheckpoint {
