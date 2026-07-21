@@ -28,10 +28,11 @@ mod dequant;
 mod gguf;
 mod routing;
 
+#[cfg(test)]
+pub(crate) mod test_fixtures;
+
 use self::adapter::{ModelAdapter, resolve_adapter};
-use self::checkpoint::{
-    MappedGgufCheckpoint, extract_named_token_embedding_from_checkpoint, probe_and_map_checkpoint,
-};
+use self::checkpoint::{MappedGgufCheckpoint, probe_and_map_checkpoint};
 use self::routing::{
     checkpoint_gate_scores, normalize_l2, normalize_to_internal_embedding_dim, resample_embedding,
     softmax, synthetic_gate_scores, top_k_indices,
@@ -112,33 +113,7 @@ impl OlmoeRouter {
         routing_mode: RoutingMode,
     ) -> Result<Self> {
         if model_path.is_empty() {
-            let inferred_experts = num_experts.max(1);
-            let inferred_top_k = top_k.max(1).min(inferred_experts);
-            return Ok(Self {
-                model_path: String::new(),
-                num_experts: inferred_experts,
-                top_k: inferred_top_k,
-                loaded: false,
-                metadata: RouterMetadata {
-                    family: family_override.unwrap_or(ModelFamily::Olmoe),
-                    architecture: "stub".into(),
-                    hidden_size: EMBEDDING_DIM,
-                    num_layers: 0,
-                    num_experts: inferred_experts,
-                    expert_used_count: inferred_top_k,
-                    quantization: "stub".into(),
-                    routing_tensor_name: "synthetic".into(),
-                    preferred_gpu_synapse_tensor_name: None,
-                    synapse_source: "synthetic-fallback".into(),
-                },
-                adapter: None,
-                routing_mode,
-                expert_membranes: vec![0.0; inferred_experts],
-                hidden_membranes: vec![0.0; EMBEDDING_DIM],
-                threshold: 0.75,
-                decay: 0.91,
-                checkpoint: None,
-            });
+            return Self::build_stub_router(num_experts, top_k, family_override, routing_mode);
         }
 
         let (metadata, checkpoint) = Self::probe_and_map(model_path, family_override)?;
@@ -182,6 +157,41 @@ impl OlmoeRouter {
         })
     }
 
+    fn build_stub_router(
+        num_experts: usize,
+        top_k: usize,
+        family_override: Option<ModelFamily>,
+        routing_mode: RoutingMode,
+    ) -> Result<Self> {
+        let inferred_experts = num_experts.max(1);
+        let inferred_top_k = top_k.max(1).min(inferred_experts);
+        Ok(Self {
+            model_path: String::new(),
+            num_experts: inferred_experts,
+            top_k: inferred_top_k,
+            loaded: false,
+            metadata: RouterMetadata {
+                family: family_override.unwrap_or(ModelFamily::Olmoe),
+                architecture: "stub".into(),
+                hidden_size: EMBEDDING_DIM,
+                num_layers: 0,
+                num_experts: inferred_experts,
+                expert_used_count: inferred_top_k,
+                quantization: "stub".into(),
+                routing_tensor_name: "synthetic".into(),
+                preferred_gpu_synapse_tensor_name: None,
+                synapse_source: "synthetic-fallback".into(),
+            },
+            adapter: None,
+            routing_mode,
+            expert_membranes: vec![0.0; inferred_experts],
+            hidden_membranes: vec![0.0; EMBEDDING_DIM],
+            threshold: 0.75,
+            decay: 0.91,
+            checkpoint: None,
+        })
+    }
+
     pub fn probe_model(path: &str, family_override: Option<ModelFamily>) -> Result<RouterMetadata> {
         let (metadata, _checkpoint) = Self::probe_and_map(path, family_override)?;
         Ok(metadata)
@@ -217,8 +227,7 @@ impl OlmoeRouter {
                 path: self.model_path.clone(),
                 reason: "checkpoint not loaded".into(),
             })?;
-        let embedding = extract_named_token_embedding_from_checkpoint(
-            checkpoint,
+        let embedding = checkpoint.extract_token_embedding(
             &adapter.token_embedding_tensor,
             &self.model_path,
             token_id,
@@ -235,7 +244,16 @@ impl OlmoeRouter {
                 path: self.model_path.clone(),
                 reason: "checkpoint not loaded".into(),
             })?;
-        checkpoint.f16_tensor_values(tensor_name, &self.model_path)
+        let info = checkpoint
+            .tensor_info(tensor_name, &self.model_path)?
+            .clone();
+        if info.ggml_type != GGML_TYPE_F16 {
+            return Err(HybridError::UnsupportedFormat(format!(
+                "tensor '{tensor_name}' must be F16, got ggml_type={}",
+                info.ggml_type
+            )));
+        }
+        checkpoint.u16_tensor_values(&info, &self.model_path, tensor_name)
     }
 
     fn probe_and_map(

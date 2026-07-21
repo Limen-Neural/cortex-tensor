@@ -1,124 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+use super::test_fixtures::*;
 use super::*;
-use std::io::Write;
-use std::path::PathBuf;
-
-fn write_temp_file(bytes: &[u8], label: &str) -> PathBuf {
-    // Use a project-local temp dir (under target/) instead of std::env::temp_dir()
-    // to satisfy security linters (e.g. Codacy "temp_dir should not be used for
-    // security operations").
-    //
-    // target/ is the standard, always-writable location for cargo build/test
-    // artifacts, is gitignored, and works reliably in CI (GHA etc. run cargo
-    // which creates it under a writable workspace). Test files are cleaned up
-    // by individual tests or left for the next cargo clean.
-    let mut path = std::env::current_dir()
-        .unwrap_or_else(|_| std::path::PathBuf::from("."))
-        .join("target")
-        .join("test-gguf");
-    std::fs::create_dir_all(&path).ok();
-    path.push(format!(
-        "corinth_canal_{label}_{}.gguf",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    let mut file = std::fs::File::create(&path).unwrap();
-    file.write_all(bytes).unwrap();
-    path
-}
-
-fn push_u32(out: &mut Vec<u8>, value: u32) {
-    out.extend_from_slice(&value.to_le_bytes());
-}
-
-fn push_u64(out: &mut Vec<u8>, value: u64) {
-    out.extend_from_slice(&value.to_le_bytes());
-}
-
-fn push_string(out: &mut Vec<u8>, value: &str) {
-    push_u64(out, value.len() as u64);
-    out.extend_from_slice(value.as_bytes());
-}
-
-fn push_kv_u32(out: &mut Vec<u8>, key: &str, value: u32) {
-    push_string(out, key);
-    push_u32(out, GGUF_VALUE_TYPE_UINT32);
-    push_u32(out, value);
-}
-
-fn push_kv_string(out: &mut Vec<u8>, key: &str, value: &str) {
-    push_string(out, key);
-    push_u32(out, GGUF_VALUE_TYPE_STRING);
-    push_string(out, value);
-}
-
-fn build_test_gguf(tensors: Vec<(&str, Vec<usize>, u32, Vec<u8>)>, alignment: u32) -> Vec<u8> {
-    let mut out = Vec::new();
-    out.extend_from_slice(&GGUF_MAGIC);
-    push_u32(&mut out, GGUF_VERSION);
-    push_u64(&mut out, tensors.len() as u64);
-    push_u64(&mut out, 7);
-    push_kv_u32(&mut out, "general.alignment", alignment);
-    push_kv_u32(&mut out, "general.file_type", 1);
-    push_kv_string(&mut out, "general.architecture", "olmoe");
-    push_kv_u32(&mut out, "olmoe.embedding_length", EMBEDDING_DIM as u32);
-    push_kv_u32(&mut out, "olmoe.block_count", 16);
-    push_kv_u32(&mut out, "olmoe.expert_count", 64);
-    push_kv_u32(&mut out, "olmoe.expert_used_count", 8);
-
-    let mut data_offset = 0usize;
-    let mut tensor_payloads = Vec::new();
-    for (name, dims, ggml_type, payload) in tensors {
-        push_string(&mut out, name);
-        push_u32(&mut out, dims.len() as u32);
-        for dim in &dims {
-            push_u64(&mut out, *dim as u64);
-        }
-        push_u32(&mut out, ggml_type);
-        push_u64(&mut out, data_offset as u64);
-        data_offset += payload.len();
-        tensor_payloads.push(payload);
-    }
-
-    while out.len() % alignment as usize != 0 {
-        out.push(0);
-    }
-    for payload in tensor_payloads {
-        out.extend_from_slice(&payload);
-    }
-
-    out
-}
-
-fn build_real_size_checkpoint(gate_payload: Vec<u8>) -> Vec<u8> {
-    let attn_q_payload = vec![0u8; EMBEDDING_DIM * EMBEDDING_DIM * 2];
-    build_test_gguf(
-        vec![
-            (
-                "blk.0.ffn_gate_inp.weight",
-                vec![EMBEDDING_DIM, 64],
-                GGML_TYPE_F32,
-                gate_payload,
-            ),
-            (
-                "blk.0.attn_q.weight",
-                vec![EMBEDDING_DIM, EMBEDDING_DIM],
-                GGML_TYPE_F16,
-                attn_q_payload,
-            ),
-            (
-                "token_embd.weight",
-                vec![EMBEDDING_DIM, 32],
-                GGML_TYPE_F16,
-                vec![0u8; EMBEDDING_DIM * 32 * 2],
-            ),
-        ],
-        32,
-    )
-}
+use std::fs::remove_file;
 
 fn stub() -> OlmoeRouter {
     OlmoeRouter::load_with_mode("", 8, 1, RoutingMode::StubUniform)
@@ -159,7 +43,7 @@ fn test_dense_sim_uses_real_gate_weights() {
     assert_eq!(model.family(), ModelFamily::Olmoe);
     assert_eq!(model.routing_tensor_name(), "blk.0.ffn_gate_inp.weight");
 
-    let _ = std::fs::remove_file(path);
+    let _ = remove_file(path);
 }
 
 #[test]
