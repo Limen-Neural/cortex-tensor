@@ -628,12 +628,12 @@ mod tests {
     use crate::types::EMBEDDING_DIM;
 
     #[test]
-    fn parse_checkpoint_layout_reads_signed_and_misc_value_types() {
+    fn parse_checkpoint_layout_reads_integer_value_types() {
         let mut out = Vec::new();
         out.extend_from_slice(&GGUF_MAGIC);
         push_u32(&mut out, GGUF_VERSION);
         push_u64(&mut out, 0);
-        push_u64(&mut out, 15);
+        push_u64(&mut out, 10);
         push_kv_raw(
             &mut out,
             "general.alignment",
@@ -664,15 +664,9 @@ mod tests {
         push_kv_i16(&mut out, "custom.i16", 1000);
         push_kv_i32(&mut out, "custom.i32", 50000);
         push_kv_i64(&mut out, "custom.i64", 1_000_000);
-        push_kv_bool(&mut out, "custom.bool", true);
-        push_kv_f32(&mut out, "custom.float32", 1.5);
-        push_kv_f64(&mut out, "custom.float64", 2.5);
-        push_kv_string(&mut out, "custom.string", "hello");
-        push_kv_array_u32(&mut out, "custom.array", &[1, 2]);
 
         let parsed = parse_checkpoint_layout(&out, "test").unwrap();
         assert_eq!(parsed.metadata.architecture, "olmoe");
-        assert!(parsed.tensors.is_empty());
         assert_eq!(parsed.metadata.numeric("custom.u8"), Some(7));
         assert_eq!(parsed.metadata.numeric("custom.u16"), Some(1234));
         assert_eq!(parsed.metadata.numeric("custom.u64"), Some(42));
@@ -680,6 +674,25 @@ mod tests {
         assert_eq!(parsed.metadata.numeric("custom.i16"), Some(1000));
         assert_eq!(parsed.metadata.numeric("custom.i32"), Some(50000));
         assert_eq!(parsed.metadata.numeric("custom.i64"), Some(1_000_000));
+    }
+
+    #[test]
+    fn parse_checkpoint_layout_reads_misc_value_types() {
+        let mut out = Vec::new();
+        out.extend_from_slice(&GGUF_MAGIC);
+        push_u32(&mut out, GGUF_VERSION);
+        push_u64(&mut out, 0);
+        push_u64(&mut out, 6);
+        push_kv_u32(&mut out, "general.alignment", 32);
+        push_kv_u32(&mut out, "general.file_type", 0);
+        push_kv_string(&mut out, "general.architecture", "olmoe");
+        push_kv_bool(&mut out, "custom.bool", true);
+        push_kv_f32(&mut out, "custom.float32", 1.5);
+        push_kv_f64(&mut out, "custom.float64", 2.5);
+        push_kv_string(&mut out, "custom.string", "hello");
+        push_kv_array_u32(&mut out, "custom.array", &[1, 2]);
+
+        let parsed = parse_checkpoint_layout(&out, "test").unwrap();
         assert_eq!(parsed.metadata.numeric("custom.bool"), Some(1));
         assert!(parsed.metadata.numeric("custom.string").is_none());
         assert!(parsed.metadata.numeric("custom.array").is_none());
