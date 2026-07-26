@@ -13,6 +13,21 @@
 //! - `moe/gguf.rs` for GGUF constants
 //! - `moe/routing.rs` for routing math and embedding resampling
 //!
+//! ## Parser boundary (see #8 coordination)
+//! `Limen-Neural/engram-parser` is the parser-layer provider for this
+//! ecosystem: the canonical zero-dependency home for GGUF v3 layout parsing
+//! (header, KV metadata, tensor directory) and MoE per-expert *raw* weight
+//! extraction, being extracted from the `rmems/corinth-canal` reference
+//! implementation (see engram-parser#7 and corinth-canal#115). This crate stays
+//! the consumer: f32 math, `Tensor` ops, routing, dequantization, and model
+//! adapters on top. Until that extraction lands, the in-crate reader in
+//! `moe/checkpoint.rs` / `moe/gguf.rs`, and the dtype coverage it feeds in
+//! `moe/dequant.rs`, are frozen for parser and dtype enhancements — take new
+//! format work to engram-parser#7 instead of adding it here. Dequantization
+//! itself stays owned by this crate; only widening the supported dtype set is
+//! frozen, since new dtypes arrive with the parser's type ids.
+//! Planning/alignment only: no dependency on engram-parser is declared yet.
+//!
 //! ## Ecosystem note (see #9 coordination)
 //! Future multi-format support (Safetensors alongside GGUF) will use a dedicated
 //! reusable `safetensors-parser` crate (modeled on engram-parser for GGUF).

@@ -35,7 +35,10 @@ src/
     ├── mod.rs        # OlmoeRouter public API, RoutingMode
     ├── adapter.rs    # model-family detection + tensor selection
     ├── checkpoint.rs # GGUF parser, mmap'd F32/F16/Q8_0/Q5_K access
-    └── routing.rs    # softmax, top-k, L2 normalize, embedding resample
+    ├── dequant.rs    # Q8_0 / Q5_K row dequant, f16→f32, row sizing
+    ├── gguf.rs       # GGUF magic/version + GGML type constants
+    ├── routing.rs    # softmax, top-k, L2 normalize, embedding resample
+    └── tests.rs      # router + checkpoint unit tests
 ```
 
 ## Modules
@@ -67,6 +70,11 @@ src/
 
 Supported GGUF tensor types: `F32`, `F16`, `Q8_0`, `Q5_K`. `IQ3_S` is detected and rejected (for token embeddings) with a clear error so callers can fall back to `llama.cpp` prompt embeddings. For the preferred GPU synapse tensor (e.g. attn_q on qwen3_moe_iq3_m), unsupported quants now correctly route to a checkpoint-backed `routing-f32` source (using the F32 routing tensor) instead of synthetic fallback. See `synapse_source()`, `real_gpu_synapse_tensor_name()`, and `OlmoeRouter` metadata.
 
+**Parser layer (planning, see #8):** the canonical home for GGUF v3
+deserialization and per-expert raw weight extraction is `engram-parser`, not this
+crate. The in-crate reader is frozen for enhancements while that extraction lands
+— see [GGUF parser boundary](#gguf-parser-boundary-see-8).
+
 **Future formats (planning, see #9):** Safetensors support will arrive via a dedicated reusable `safetensors-parser` crate (header inspection + deterministic manifest + MoE candidate discovery), extracted as a one-way copy of reference logic from rmems/corinth-canal (see corinth-canal#116, engram-parser#10, and cortex #7/#8 for the GGUF precedent with engram-parser). No implementation or dependency is present yet — this keeps the reusable parser boundary clean. Cross-links and notes are maintained for alignment.
 
 ### GGUF adapter + synapse source + SAAQ flow (code paths)
@@ -78,6 +86,85 @@ Supported GGUF tensor types: `F32`, `F16`, `Q8_0`, `Q5_K`. `IQ3_S` is detected a
 - `extract_named_token_embedding_from_checkpoint` (checkpoint.rs) supports dequant for Q8_0/Q5_K (and F32/F16); IQ3_S errors for embeddings.
 - Public metadata exposes `preferred_gpu_synapse_tensor_name`, `real_gpu_synapse_tensor_name`, `synapse_source` for SAAQ experiment / Surrogate_Viz consumers to choose dequant vs. synthetic path and load the right tensor (f16 path or f32 routing path).
 - SAAQ artifacts (external): calibration runs consume the router to emit artifacts for viz; see labels on related issues for campaign.
+
+## Scope / Boundaries
+
+This crate **owns**:
+
+- Row-major `f32` `Tensor` and CPU tensor ops (matmul, batched matmul, causal
+  mask, softmax, layer norm).
+- Decoder-only transformer building blocks (attention, block, `TransformerLM`).
+- MoE routing math — gate scores, softmax, top-k selection, L2 normalization,
+  embedding resampling — and the simulation routing modes.
+- Model-family adapters and tensor selection (`Olmoe`, `Qwen3Moe`, `Gemma4`,
+  `DeepSeek2`, `LlamaMoe`), including synapse-source resolution.
+- Dequantization of supported GGUF quants to `f32` (`Q8_0`, `Q5_K`, `F16`).
+- The consumer-side GGUF bridge it needs today: mmap'd tensor access and
+  token-embedding extraction.
+
+This crate **does not own**:
+
+- Canonical GGUF v3 deserialization (header, KV metadata, tensor directory) and
+  per-expert *raw* weight extraction — see
+  [`engram-parser`](https://github.com/Limen-Neural/engram-parser) and the
+  parser-boundary note below.
+- Safetensors header inspection, deterministic manifests, and MoE candidate
+  discovery — planned for a dedicated `safetensors-parser` crate (see #9).
+- CUDA / GPU / SIMD execution, and any GPU host registration.
+- SNN neuron dynamics ([`neuromod`](https://github.com/Limen-Neural/neuromod))
+  and ANN→SNN orchestration
+  ([`hybrid-fusion`](https://github.com/Limen-Neural/hybrid-fusion)).
+- Tokenization and automatic differentiation (see [Non-goals](#non-goals)).
+
+**Allowed dependencies:** the current small set — `serde`, `serde_json`,
+`thiserror`, `rand`, `rayon`, `memmap2`, `half`, plus optional `sentry` — and,
+in future, the zero-dependency Limen-Neural parser crates.
+
+**Forbidden dependencies:** GPU backends (`cust`), inference frameworks
+(`candle`, `tch`, `ort`), domain/SNN orchestration crates, and any dependency on
+`rmems/corinth-canal`. Extraction from corinth-canal is a **one-way copy**; that
+repo keeps an unmodified reference copy per its `PROMOTION_RULES.md`.
+
+| Crate | Role |
+|-------|------|
+| [`engram-parser`](https://github.com/Limen-Neural/engram-parser) | GGUF parse + per-expert raw weight extraction |
+| `cortex-tensor` (this crate) | Tensor math + MoE routing on extracted weights |
+| [`hybrid-fusion`](https://github.com/Limen-Neural/hybrid-fusion) | ANN→SNN orchestration |
+| [`neuromod`](https://github.com/Limen-Neural/neuromod) | SNN neuron dynamics (downstream consumer) |
+
+See [LIM-9](https://linear.app/saaq-spiking-adaptive-activity/issue/LIM-9/plan-rust-runtime-and-deployment-repo-boundary-matrix)
+for the full Rust runtime/deployment boundary matrix, and issues #5 (boundary
+doc), #8 (GGUF parser coordination), and #9 (Safetensors coordination) for this
+repo's tracking.
+
+### GGUF parser boundary (see #8)
+
+`engram-parser` is the parser-layer provider for this ecosystem: it is the
+canonical, zero-dependency home for GGUF v3 layout parsing and MoE per-expert
+raw weight extraction, being extracted from the experimental
+`rmems/corinth-canal` reference implementation (see
+[engram-parser#7](https://github.com/Limen-Neural/engram-parser/issues/7) and
+[corinth-canal#115](https://github.com/rmems/corinth-canal/issues/115)).
+`cortex-tensor` stays the consumer: `f32` math, `Tensor` ops, routing, and model
+adapters on top of parsed layout / extracted weights.
+
+| Layer | Canonical owner | Where it lives in this crate today |
+|---|---|---|
+| GGUF magic + v3 header, KV metadata, tensor directory | `engram-parser` | `src/moe/checkpoint.rs` (`parse_checkpoint_layout`) |
+| GGML type + GGUF value-type constants | `engram-parser` | `src/moe/gguf.rs` |
+| Per-expert raw weight extraction | `engram-parser` | not implemented here |
+| mmap'd tensor access for the router | `cortex-tensor` | `src/moe/checkpoint.rs` (`probe_and_map_checkpoint`) |
+| Dequantization to `f32` | `cortex-tensor` | `src/moe/dequant.rs` |
+| Routing math, top-k, family adapters | `cortex-tensor` | `src/moe/routing.rs`, `src/moe/adapter.rs` |
+
+**Freeze while the extraction lands:** no new parser code and no dtype/GGUF
+format enhancements in `src/moe/checkpoint.rs`, `src/moe/gguf.rs`, or
+`src/moe/dequant.rs` until engram-parser#7 lands (or an explicit sub-issue is
+opened under it). Known gaps versus the corinth-canal reference — additional
+dtypes (`BF16`, `Q6_K`, `IQ3_*`), a `ggml_type_label` helper, and the
+"GGUF wire type 31 is `Q4_0_4_4`, not IQ3_M" discipline — are deliberately
+parked on engram-parser#7 rather than duplicated here. Cross-repo planning is
+tracked in Linear LIM-88 (under LIM-9).
 
 ## Install
 
