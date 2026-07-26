@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Quantized tensor dequantization helpers (Q8_0, Q5_K, etc.).
+//!
+//! **Frozen for dtype work (see #8).** Dequantization to `f32` is owned by this
+//! crate, but widening the supported dtype set (`BF16`, `Q6_K`, `IQ3_*`, …) is
+//! frozen while GGUF layout parsing is extracted into
+//! `Limen-Neural/engram-parser` — new dtypes arrive with that crate's GGML type
+//! ids, so take them to engram-parser#7 rather than adding a block format here
+//! that `moe/gguf.rs` cannot yet name.
 
 use crate::error::{HybridError, Result};
 
