@@ -4,9 +4,8 @@ use super::test_fixtures::*;
 use super::*;
 use std::fs::remove_file;
 
-fn stub() -> OlmoeRouter {
-    OlmoeRouter::load_with_mode("", 8, 1, RoutingMode::StubUniform)
-        .expect("stub load should succeed")
+fn stub() -> MoeRouter {
+    MoeRouter::load_with_mode("", 8, 1, RoutingMode::StubUniform).expect("stub load should succeed")
 }
 
 #[test]
@@ -35,7 +34,7 @@ fn test_dense_sim_uses_real_gate_weights() {
     let path = write_temp_file(&build_real_size_checkpoint(gate_bytes), "dense-real");
 
     let mut model =
-        OlmoeRouter::load_with_mode(path.to_str().unwrap(), 8, 2, RoutingMode::DenseSim).unwrap();
+        MoeRouter::load_with_mode(path.to_str().unwrap(), 8, 2, RoutingMode::DenseSim).unwrap();
     let mut embedding = vec![0.0f32; EMBEDDING_DIM];
     embedding[0] = 1.0;
     let out = model.forward(&embedding).unwrap();
@@ -48,7 +47,7 @@ fn test_dense_sim_uses_real_gate_weights() {
 
 #[test]
 fn test_spiking_sim_state_can_reset() {
-    let mut model = OlmoeRouter::load_with_mode("", 8, 2, RoutingMode::SpikingSim).unwrap();
+    let mut model = MoeRouter::load_with_mode("", 8, 2, RoutingMode::SpikingSim).unwrap();
     let _ = model.forward(&vec![1.0; EMBEDDING_DIM]).unwrap();
     assert!(model.has_state_activity());
     model.reset_state();
@@ -61,7 +60,7 @@ fn test_real_checkpoint_probe_via_env() {
         return;
     };
 
-    let metadata = OlmoeRouter::probe_model(&path, None).unwrap();
+    let metadata = MoeRouter::probe_model(&path, None).unwrap();
     assert!(!metadata.architecture.is_empty());
     assert!(metadata.hidden_size > 0);
     assert!(metadata.num_experts > 0);
