@@ -9,6 +9,10 @@ coverage:
       default:
         informational: true
 
+ignore:
+  - "target/**"
+  - "examples/**"
+
 comment:
   layout: "reach,diff,flags,files"
   behavior: default

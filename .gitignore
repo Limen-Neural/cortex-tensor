@@ -42,3 +42,4 @@ Thumbs.db
 *.tmp
 tmp/
 cache/
+lcov.info

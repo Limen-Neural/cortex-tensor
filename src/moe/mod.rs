@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-// NOTE: This module implements the main OlmoeRouter. High LOC is due to the
+// NOTE: This module implements the main MoeRouter. High LOC is due to the
 // full public API, loading logic, multiple routing modes, and extensive tests.
 // Further modularization planned.
 
@@ -64,7 +64,7 @@ pub(crate) use self::gguf::{
     GGUF_VALUE_TYPE_UINT64, GGUF_VERSION,
 };
 
-pub struct OlmoeRouter {
+pub struct MoeRouter {
     model_path: String,
     num_experts: usize,
     top_k: usize,
@@ -94,13 +94,13 @@ pub struct RouterMetadata {
 }
 
 #[derive(Debug, Clone)]
-pub struct OlmoeOutput {
+pub struct MoeOutput {
     pub expert_weights: Vec<f32>,
     pub selected_experts: Vec<usize>,
     pub hidden: Vec<f32>,
 }
 
-impl OlmoeRouter {
+impl MoeRouter {
     pub fn load(model_path: &str, num_experts: usize, top_k: usize) -> Result<Self> {
         Self::load_with_family_and_mode(
             model_path,
@@ -212,7 +212,7 @@ impl OlmoeRouter {
         Ok(metadata)
     }
 
-    pub fn forward(&mut self, embedding: &[f32]) -> Result<OlmoeOutput> {
+    pub fn forward(&mut self, embedding: &[f32]) -> Result<MoeOutput> {
         if embedding.len() != EMBEDDING_DIM {
             return Err(HybridError::InputLengthMismatch {
                 expected: EMBEDDING_DIM,
@@ -292,7 +292,7 @@ impl OlmoeRouter {
         Ok((metadata, checkpoint))
     }
 
-    fn simulate_moe_routing(&self, embedding: &[f32]) -> Result<OlmoeOutput> {
+    fn simulate_moe_routing(&self, embedding: &[f32]) -> Result<MoeOutput> {
         let gate_scores = self.compute_gate_scores(embedding)?;
         let expert_weights = softmax(&gate_scores);
         let selected_experts = top_k_indices(&expert_weights, self.top_k);
@@ -302,14 +302,14 @@ impl OlmoeRouter {
             .sum();
         let hidden: Vec<f32> = embedding.iter().map(|&v| v * selected_mass).collect();
 
-        Ok(OlmoeOutput {
+        Ok(MoeOutput {
             expert_weights,
             selected_experts,
             hidden,
         })
     }
 
-    fn spiking_moe_routing(&mut self, embedding: &[f32]) -> Result<OlmoeOutput> {
+    fn spiking_moe_routing(&mut self, embedding: &[f32]) -> Result<MoeOutput> {
         let gate_scores = self.compute_gate_scores(embedding)?;
         let n = self.num_experts;
         let mut membrane_scores = Vec::with_capacity(n);
@@ -356,7 +356,7 @@ impl OlmoeRouter {
             *value = spike * 0.3;
         }
 
-        Ok(OlmoeOutput {
+        Ok(MoeOutput {
             expert_weights,
             selected_experts,
             hidden,
@@ -379,9 +379,9 @@ impl OlmoeRouter {
         Ok(synthetic_gate_scores(self.num_experts, embedding))
     }
 
-    fn stub_output(&self) -> OlmoeOutput {
+    fn stub_output(&self) -> MoeOutput {
         let n = self.num_experts.max(1);
-        OlmoeOutput {
+        MoeOutput {
             expert_weights: vec![1.0 / n as f32; n],
             selected_experts: (0..self.top_k.min(n)).collect(),
             hidden: vec![0.0; EMBEDDING_DIM],
