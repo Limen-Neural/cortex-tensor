@@ -53,7 +53,7 @@ jobs:
 
     # reviewdog for inline PR comments from clippy (addresses chore reviewdog integration)
     - name: Setup reviewdog
-      uses: reviewdog/action-setup@6fe195f8a0dd1627c6163ecaef4e8ed6324a0181
+      uses: reviewdog/action-setup@e66d5e0cb91cee284a2263f45078c34fc6794963
     - name: Clippy with reviewdog (PR comments)
       env:
         REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
