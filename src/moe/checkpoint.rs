@@ -384,8 +384,10 @@ impl MappedGgufCheckpoint {
             });
         }
         Ok(self.mmap[byte_start..byte_end]
-            .chunks_exact(2)
-            .map(|b| u16::from_le_bytes([b[0], b[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|b| u16::from_le_bytes(*b))
             .collect())
     }
 
