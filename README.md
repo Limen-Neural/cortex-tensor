@@ -4,7 +4,7 @@ Pure-Rust tensor, transformer, and Mixture-of-Experts building blocks. No CUDA, 
 
 [![Rust](https://img.shields.io/badge/rust-edition%202024-orange)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-MIT%2FApache-blue)](./LICENSE-APACHE-2.0)
-[![codecov](https://codecov.io/gh/Limen-Neural/cortex-tensor/branch/main/graph/badge.svg)](https://codecov.io/gh/Limen-Neural/cortex-tensor)
+[![codecov](https://codecov.io/gh/rmems/cortex-tensor/branch/main/graph/badge.svg)](https://codecov.io/gh/rmems/cortex-tensor)
 
 ## Overview
 
@@ -107,19 +107,19 @@ This crate **does not own**:
 
 - Canonical GGUF v3 deserialization (header, KV metadata, tensor directory) and
   per-expert *raw* weight extraction — see
-  [`engram-parser`](https://github.com/Limen-Neural/engram-parser) and the
+  [`engram-parser`](https://github.com/rmems/engram-parser) and the
   parser-boundary note below.
 - Safetensors header inspection, deterministic manifests, and MoE candidate
   discovery — planned for a dedicated `safetensors-parser` crate (see #9).
 - CUDA / GPU / SIMD execution, and any GPU host registration.
-- SNN neuron dynamics ([`neuromod`](https://github.com/Limen-Neural/neuromod))
+- SNN neuron dynamics ([`neuromod`](https://github.com/rmems/neuromod))
   and ANN→SNN orchestration
-  ([`hybrid-fusion`](https://github.com/Limen-Neural/hybrid-fusion)).
+  ([`hybrid-fusion`](https://github.com/rmems/hybrid-fusion)).
 - Tokenization and automatic differentiation (see [Non-goals](#non-goals)).
 
 **Allowed dependencies:** the current small set — `serde`, `serde_json`,
 `thiserror`, `rand`, `rayon`, `memmap2`, `half`, plus optional `sentry` — and,
-in future, the zero-dependency Limen-Neural parser crates.
+in future, the zero-dependency rmems parser crates.
 
 **Forbidden dependencies:** GPU backends (`cust`), inference frameworks
 (`candle`, `tch`, `ort`), domain/SNN orchestration crates, and any dependency on
@@ -128,10 +128,10 @@ repo keeps an unmodified reference copy per its `PROMOTION_RULES.md`.
 
 | Crate | Role |
 |-------|------|
-| [`engram-parser`](https://github.com/Limen-Neural/engram-parser) | GGUF parse + per-expert raw weight extraction |
+| [`engram-parser`](https://github.com/rmems/engram-parser) | GGUF parse + per-expert raw weight extraction |
 | `cortex-tensor` (this crate) | Tensor math + MoE routing on extracted weights |
-| [`hybrid-fusion`](https://github.com/Limen-Neural/hybrid-fusion) | ANN→SNN orchestration |
-| [`neuromod`](https://github.com/Limen-Neural/neuromod) | SNN neuron dynamics (downstream consumer) |
+| [`hybrid-fusion`](https://github.com/rmems/hybrid-fusion) | ANN→SNN orchestration |
+| [`neuromod`](https://github.com/rmems/neuromod) | SNN neuron dynamics (downstream consumer) |
 
 See [LIM-9](https://linear.app/saaq-spiking-adaptive-activity/issue/LIM-9/plan-rust-runtime-and-deployment-repo-boundary-matrix)
 for the full Rust runtime/deployment boundary matrix, and issues #5 (boundary
@@ -144,7 +144,7 @@ repo's tracking.
 canonical, zero-dependency home for GGUF v3 layout parsing and MoE per-expert
 raw weight extraction, being extracted from the experimental
 `rmems/corinth-canal` reference implementation (see
-[engram-parser#7](https://github.com/Limen-Neural/engram-parser/issues/7) and
+[engram-parser#7](https://github.com/rmems/engram-parser/issues/7) and
 [corinth-canal#115](https://github.com/rmems/corinth-canal/issues/115)).
 `cortex-tensor` stays the consumer: `f32` math, `Tensor` ops, routing, and model
 adapters on top of parsed layout / extracted weights.
@@ -171,7 +171,7 @@ tracked in Linear LIM-88 (under LIM-9).
 
 ```toml
 [dependencies]
-cortex-tensor = { git = "https://github.com/Limen-Neural/cortex-tensor", branch = "main" }
+cortex-tensor = { git = "https://github.com/rmems/cortex-tensor", branch = "main" }
 ```
 
 ## Quick start

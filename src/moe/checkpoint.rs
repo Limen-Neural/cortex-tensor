@@ -7,7 +7,7 @@
 //! GGUF checkpoint parsing and mapped tensor access for the router bridge.
 //!
 //! **Frozen for parser work (see #8).** The canonical home for GGUF v3 layout
-//! parsing and per-expert raw weight extraction is `Limen-Neural/engram-parser`
+//! parsing and per-expert raw weight extraction is `rmems/engram-parser`
 //! (extraction tracked in engram-parser#7, source corinth-canal#115). Do not add
 //! new parser paths, dtypes, or format handling here while that lands — open a
 //! sub-issue under engram-parser#7 instead. What stays in this crate: mmap'd

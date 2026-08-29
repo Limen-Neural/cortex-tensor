@@ -24,7 +24,7 @@ updates:
       - "dependencies"
       - "github-actions"
 
-  # Julia (for parity with other Limen-Neural repos using Julia)
+  # Julia (for parity with other rmems repos using Julia)
   - package-ecosystem: "julia"
     directory: "/"
     schedule:
