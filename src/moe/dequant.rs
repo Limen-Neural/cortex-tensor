@@ -5,7 +5,7 @@
 //! **Frozen for dtype work (see #8).** Dequantization to `f32` is owned by this
 //! crate, but widening the supported dtype set (`BF16`, `Q6_K`, `IQ3_*`, …) is
 //! frozen while GGUF layout parsing is extracted into
-//! `Limen-Neural/engram-parser` — new dtypes arrive with that crate's GGML type
+//! `rmems/engram-parser` — new dtypes arrive with that crate's GGML type
 //! ids, so take them to engram-parser#7 rather than adding a block format here
 //! that `moe/gguf.rs` cannot yet name.
 
@@ -47,7 +47,7 @@ pub(crate) fn dequantize_row_q8_0(row: &[u8], width: usize) -> Result<Vec<f32>> 
     }
 
     let mut out = Vec::with_capacity(width);
-    for block in row.chunks_exact(34) {
+    for block in row.as_chunks::<34>().0 {
         let d = f16_to_f32(u16::from_le_bytes([block[0], block[1]]));
         for &quant in &block[2..34] {
             out.push((quant as i8) as f32 * d);
@@ -65,7 +65,7 @@ pub(crate) fn dequantize_row_q5_k(row: &[u8], width: usize) -> Result<Vec<f32>> 
     }
 
     let mut out = Vec::with_capacity(width);
-    for block in row.chunks_exact(176) {
+    for block in row.as_chunks::<176>().0 {
         let d = f16_to_f32(u16::from_le_bytes([block[0], block[1]]));
         let dmin = f16_to_f32(u16::from_le_bytes([block[2], block[3]]));
         let scales = &block[4..16];
@@ -76,7 +76,7 @@ pub(crate) fn dequantize_row_q5_k(row: &[u8], width: usize) -> Result<Vec<f32>> 
         let mut u1 = 1u16;
         let mut u2 = 2u16;
 
-        for ql_chunk in ql.chunks_exact(32) {
+        for ql_chunk in ql.as_chunks::<32>().0 {
             let (sc1, m1) = scale_min_k4(is, scales);
             let (sc2, m2) = scale_min_k4(is + 1, scales);
             let d1 = d * sc1 as f32;

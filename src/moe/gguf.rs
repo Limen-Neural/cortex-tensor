@@ -3,7 +3,7 @@
 //! GGUF format constants.
 //!
 //! **Frozen for parser work (see #8).** New GGML type ids and dtype handling
-//! belong in `Limen-Neural/engram-parser` (engram-parser#7), not here. Note for
+//! belong in `rmems/engram-parser` (engram-parser#7), not here. Note for
 //! any future port: GGUF wire type 31 is the historical `Q4_0_4_4` layout, not
 //! IQ3_M — see the corinth-canal reference (`src/moe/ggml.rs`) before adding
 //! quant ids.

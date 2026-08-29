@@ -14,7 +14,7 @@
 //! - `moe/routing.rs` for routing math and embedding resampling
 //!
 //! ## Parser boundary (see #8 coordination)
-//! `Limen-Neural/engram-parser` is the parser-layer provider for this
+//! `rmems/engram-parser` is the parser-layer provider for this
 //! ecosystem: the canonical zero-dependency home for GGUF v3 layout parsing
 //! (header, KV metadata, tensor directory) and MoE per-expert *raw* weight
 //! extraction, being extracted from the `rmems/corinth-canal` reference
