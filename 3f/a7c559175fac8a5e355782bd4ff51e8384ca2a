@@ -1,0 +1,19 @@
+Cargo.toml
+  s_af3ac81f57a0f6::t_50442765a09019 8-9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "3fa7c559175fac8a5e355782bd4ff51e8384ca2a",
+  "prompts": {},
+  "sessions": {
+    "s_af3ac81f57a0f6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "87f79e50-4a42-49bb-bde3-bef1c48b57c9",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Raul Montoya Cardenas <montoyaraul34@gmail.com>"
+    }
+  }
+}
